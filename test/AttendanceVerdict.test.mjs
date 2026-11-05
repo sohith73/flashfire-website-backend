@@ -205,7 +205,7 @@ describe('mark window and verdict (plan 2.2, 5.6)', () => {
     assert.equal(r.counted, true);
 
     const { deps, posts } = mkDeps();
-    const out = await runVerdictPass(new Date(start + 95 * 1000), deps);
+    const out = await runVerdictPass(new Date(start + 215 * 1000), deps);
     assert.deepEqual(out.verdicts.map((v) => v.verdict), ['present']);
     const row = await rowOf(bookingId);
     assert.equal(row.verdict, 'present');
@@ -223,7 +223,7 @@ describe('mark window and verdict (plan 2.2, 5.6)', () => {
     assert.equal(r.code, 'window_closed');
 
     const { deps, posts } = mkDeps();
-    await runVerdictPass(new Date(start + 95 * 1000), deps);
+    await runVerdictPass(new Date(start + 215 * 1000), deps);
     assert.equal((await rowOf(bookingId)).verdict, 'absent');
     assert.equal(posts.length, 1);
     assert.match(posts[0], /^🚫 \*\*BDA Absent\*\*\n\*\*BDA:\*\* Siddhartha \(/);
@@ -276,7 +276,7 @@ describe('mark window and verdict (plan 2.2, 5.6)', () => {
         await recordPresentSignal({ bookingId, bdaEmail: SID, kind: 'google_meet', eventAt: new Date(start + 20 * 1000), matchedBy: 'stable_id', receivedAt: new Date(start + 80 * 1000) });
       },
     });
-    await runVerdictPass(new Date(start + 95 * 1000), deps);
+    await runVerdictPass(new Date(start + 215 * 1000), deps);
     const row = await rowOf(bookingId);
     assert.equal(row.verdict, 'present');
     assert.equal(row.verdictSignal, 'google_meet');
@@ -290,7 +290,7 @@ describe('mark window and verdict (plan 2.2, 5.6)', () => {
     assert.equal(r.marked, false);
     assert.equal(r.ignored, 'not_stable_id');
     const { deps } = mkDeps();
-    await runVerdictPass(new Date(start + 95 * 1000), deps);
+    await runVerdictPass(new Date(start + 215 * 1000), deps);
     assert.equal((await rowOf(bookingId)).verdict, 'absent');
   });
 
@@ -306,7 +306,7 @@ describe('mark window and verdict (plan 2.2, 5.6)', () => {
     assert.equal(r.status, 200);
 
     const { deps } = mkDeps();
-    await runVerdictPass(new Date(start + 3 * MIN), deps);
+    await runVerdictPass(new Date(start + 215 * 1000), deps);
     const row = await rowOf(bookingId);
     assert.equal(row.verdict, 'absent');
     assert.equal(new Date(row.firstJoinedAt).toISOString(), joinedAt);
@@ -323,7 +323,7 @@ describe('mark window and verdict (plan 2.2, 5.6)', () => {
       body: { bookingId, meetLink: 'https://meet.google.com/abc-defg-hij', joinedAt: new Date(start + 30 * 1000).toISOString() },
     });
     const { deps } = mkDeps();
-    await runVerdictPass(new Date(start + 95 * 1000), deps);
+    await runVerdictPass(new Date(start + 215 * 1000), deps);
     const row = await rowOf(bookingId);
     assert.equal(row.verdict, 'present');
     assert.equal(row.verdictSignal, 'extension_join');
@@ -362,7 +362,7 @@ describe('mark window and verdict (plan 2.2, 5.6)', () => {
 
     const one = mkDeps();
     const two = mkDeps();
-    const now = new Date(start + 95 * 1000);
+    const now = new Date(start + 215 * 1000);
     const [a, b] = await Promise.all([runVerdictPass(now, one.deps), runVerdictPass(now, two.deps)]);
     await flush();
 
@@ -383,7 +383,7 @@ describe('mark window and verdict (plan 2.2, 5.6)', () => {
       extra: { statusHistory: [{ status: 'canceled', previousStatus: 'scheduled', changedAt: new Date(start - 60 * MIN), source: 'calendly' }] },
     });
     const { deps, posts } = mkDeps();
-    const out = await runVerdictPass(new Date(start + 95 * 1000), deps);
+    const out = await runVerdictPass(new Date(start + 215 * 1000), deps);
     assert.equal(out.verdicts.length, 0);
     assert.equal(await rowOf(bookingId), null);
     assert.equal(posts.length, 0);
@@ -402,7 +402,7 @@ describe('mark window and verdict (plan 2.2, 5.6)', () => {
       },
     });
     const { deps } = mkDeps();
-    await runVerdictPass(new Date(start + 95 * 1000), deps);
+    await runVerdictPass(new Date(start + 215 * 1000), deps);
     assert.equal((await rowOf(bookingId)).verdict, 'absent');
   });
 
@@ -410,7 +410,7 @@ describe('mark window and verdict (plan 2.2, 5.6)', () => {
     const start = Date.now() - 10 * MIN;
     const bookingId = await mkBooking({ start });
     const { deps } = mkDeps();
-    await runVerdictPass(new Date(start + 95 * 1000), deps);
+    await runVerdictPass(new Date(start + 215 * 1000), deps);
     assert.equal((await rowOf(bookingId)).verdict, 'absent');
 
     const corrections = [];
@@ -437,7 +437,7 @@ describe('mark window and verdict (plan 2.2, 5.6)', () => {
     const start = Date.now() - 10 * MIN;
     const bookingId = await mkBooking({ start });
     const { deps } = mkDeps();
-    await runVerdictPass(new Date(start + 95 * 1000), deps);
+    await runVerdictPass(new Date(start + 215 * 1000), deps);
     const r = await recordPresentSignal({ bookingId, bdaEmail: SID, kind: 'extension_join', eventAt: new Date(start + 2 * MIN) });
     assert.equal(r.counted, false);
     assert.equal(r.correction, null);
@@ -449,7 +449,7 @@ describe('mark window and verdict (plan 2.2, 5.6)', () => {
     const bookingId = await mkBooking({ start });
     await recordPresentSignal({ bookingId, bdaEmail: SID, kind: 'button_meet', receivedAt: new Date(start) });
     const { deps, posts } = mkDeps();
-    await runVerdictPass(new Date(start + 95 * 1000), deps);
+    await runVerdictPass(new Date(start + 215 * 1000), deps);
 
     await recordPresentSignal({ bookingId, bdaEmail: SID, kind: 'extension_join', eventAt: new Date(start + 10 * MIN) });
     await runVerdictPass(new Date(start + 5 * MIN), deps);
@@ -464,7 +464,7 @@ describe('mark window and verdict (plan 2.2, 5.6)', () => {
     const start = Date.now() - 10 * MIN;
     const bookingId = await mkBooking({ start, host: SID });
     const { deps } = mkDeps();
-    await runVerdictPass(new Date(start + 95 * 1000), deps);
+    await runVerdictPass(new Date(start + 215 * 1000), deps);
     assert.equal((await rowOf(bookingId, SID)).verdict, 'absent');
 
     // KAL joins on time-ish, after SID's verdict. SID's verdict row must survive the phantom-row cleanup.
@@ -487,7 +487,7 @@ describe('mark window and verdict (plan 2.2, 5.6)', () => {
     await BdaProfileModel.updateOne({ email: SID }, { leaveDays: [istDay(start)] });
     invalidateRegistryCache();
     const { deps, posts } = mkDeps();
-    const out = await runVerdictPass(new Date(start + 95 * 1000), deps);
+    const out = await runVerdictPass(new Date(start + 215 * 1000), deps);
     assert.equal(out.verdicts.length, 0);
     assert.equal(await rowOf(bookingId), null);
     assert.equal(posts.length, 0);
@@ -497,18 +497,20 @@ describe('mark window and verdict (plan 2.2, 5.6)', () => {
     const start = Date.now() - 10 * MIN;
     const bookingId = await mkBooking({ start, host: NOBODY });
     const { deps } = mkDeps();
-    const out = await runVerdictPass(new Date(start + 95 * 1000), deps);
+    const out = await runVerdictPass(new Date(start + 215 * 1000), deps);
     assert.equal(out.verdicts.length, 0);
     assert.equal(await rowOf(bookingId, NOBODY), null);
   });
 
-  it('does nothing before start + 90 s', async () => {
+  it('does nothing before start + 3 min 30 s (window + 2 min minimum stay + settle)', async () => {
     const start = Date.now() - 10 * MIN;
     const bookingId = await mkBooking({ start });
     const { deps } = mkDeps();
-    await runVerdictPass(new Date(start + 80 * 1000), deps);
-    assert.equal(await rowOf(bookingId), null);
     await runVerdictPass(new Date(start + 90 * 1000), deps);
+    assert.equal(await rowOf(bookingId), null);
+    await runVerdictPass(new Date(start + 200 * 1000), deps);
+    assert.equal(await rowOf(bookingId), null);
+    await runVerdictPass(new Date(start + 210 * 1000), deps);
     assert.equal((await rowOf(bookingId)).verdict, 'absent');
   });
 
@@ -517,8 +519,8 @@ describe('mark window and verdict (plan 2.2, 5.6)', () => {
     const bookingId = await mkBooking({ start });
     let calls = 0;
     const { deps } = mkDeps({ meetVerifier: async (b) => { calls++; assert.equal(b.bookingId, bookingId); } });
-    await runVerdictPass(new Date(start + 95 * 1000), deps);
-    await runVerdictPass(new Date(start + 110 * 1000), deps);
+    await runVerdictPass(new Date(start + 215 * 1000), deps);
+    await runVerdictPass(new Date(start + 230 * 1000), deps);
     assert.equal(calls, 1);
   });
 
@@ -531,7 +533,7 @@ describe('mark window and verdict (plan 2.2, 5.6)', () => {
 
     await recordPresentSignal({ bookingId, bdaEmail: KAL, kind: 'button_crm', receivedAt: new Date(start - MIN) });
     const { deps } = mkDeps();
-    await runVerdictPass(new Date(start + 95 * 1000), deps);
+    await runVerdictPass(new Date(start + 215 * 1000), deps);
     assert.equal((await rowOf(bookingId, KAL)).verdict, 'present');
     assert.equal(await rowOf(bookingId, SID), null, 'the old assignee is not judged');
   });
@@ -544,16 +546,16 @@ describe('verdict health flag (plan 2.7)', () => {
   it('is healthy when the job is on time and Google is fresh', async () => {
     const start = Date.now() - 10 * MIN;
     const { deps } = mkDeps();
-    assert.equal(await computeVerdictHealth(payload(start, start + 95 * 1000), { ...deps, getHeartbeat: async () => null }), true);
+    assert.equal(await computeVerdictHealth(payload(start, start + 215 * 1000), { ...deps, getHeartbeat: async () => null }), true);
   });
 
   it('is unhealthy when Google is stale and the extension sent no heartbeat, healthy when it did', async () => {
     const start = Date.now() - 10 * MIN;
     const staleGoogle = fakeHealth({ wasSourceHealthy: async () => false });
     const none = { ...mkDeps({ health: staleGoogle }).deps, getHeartbeat: async () => null };
-    assert.equal(await computeVerdictHealth(payload(start, start + 95 * 1000), none), false);
+    assert.equal(await computeVerdictHealth(payload(start, start + 215 * 1000), none), false);
     const beat = { ...none, getHeartbeat: async () => ({ lastHeartbeatAt: new Date(start - MIN) }) };
-    assert.equal(await computeVerdictHealth(payload(start, start + 95 * 1000), beat), true);
+    assert.equal(await computeVerdictHealth(payload(start, start + 215 * 1000), beat), true);
   });
 
   it('is unhealthy when the job did not run between start + 60 s and start + 5 min', async () => {
@@ -566,7 +568,7 @@ describe('verdict health flag (plan 2.7)', () => {
     const start = Date.now() - 10 * MIN;
     const a = await mkBooking({ start });
     const { deps } = mkDeps({ health: fakeHealth({ wasSourceHealthy: async () => false }), getHeartbeat: async () => null });
-    await runVerdictPass(new Date(start + 95 * 1000), deps);
+    await runVerdictPass(new Date(start + 215 * 1000), deps);
     await flush();
     const e = events.verdict.find((x) => x.bookingId === a);
     assert.equal(e.healthy, false);
@@ -593,7 +595,7 @@ describe('integrity check', () => {
       signals: [{ kind, eventAt: new Date(start - MIN), receivedAt: new Date(start - MIN) }, ...extraSignals],
       markedPresentAt: new Date(start - MIN),
       verdict: 'present',
-      verdictAt: new Date(start + 95 * 1000),
+      verdictAt: new Date(start + 215 * 1000),
       verdictSignal: kind,
       ...rowExtra,
     });
@@ -1401,7 +1403,7 @@ describe('legacy manual-mark (extensions older than v2)', () => {
     assert.deepEqual(row.signals.map((x) => x.kind), ['button_meet']);
 
     const { deps, posts } = mkDeps();
-    await runVerdictPass(new Date(start + 95 * 1000), deps);
+    await runVerdictPass(new Date(start + 215 * 1000), deps);
     assert.equal((await rowOf(bookingId)).verdict, 'present');
     assert.deepEqual(posts, [], 'present means no absent alert');
   });
@@ -1425,7 +1427,7 @@ describe('review fixes: alert delivery, go-live clock, forged times', () => {
     const bookingId = await mkBooking({ start });
     const down = mkDeps();
     down.deps.poster = async (m) => (down.posts.push(m), false); // Discord is down
-    await runVerdictPass(new Date(start + 95 * 1000), down.deps);
+    await runVerdictPass(new Date(start + 215 * 1000), down.deps);
     let row = await rowFor(bookingId);
     assert.equal(row.verdict, 'absent');
     assert.equal(row.verdictAlertPending, true, 'the verdict exists but nobody has been told yet');
@@ -1476,7 +1478,7 @@ describe('review fixes: alert delivery, go-live clock, forged times', () => {
     const start = Date.now() - 10 * MIN;
     const bookingId = await mkBooking({ start });
     const { deps } = mkDeps();
-    await runVerdictPass(new Date(start + 95 * 1000), deps); // absent
+    await runVerdictPass(new Date(start + 215 * 1000), deps); // absent
     const posts = [];
     const r = await recordPresentSignal(
       { bookingId, bdaEmail: SID, kind: 'extension_join', eventAt: new Date(start + 20 * 1000) },

@@ -171,7 +171,7 @@ describe('double-booking', () => {
       signals: [{ kind: 'extension_join', eventAt: new Date(start - 2 * MIN), receivedAt: new Date(start - 2 * MIN) }],
     });
     const { absent, d } = deps();
-    await runVerdictPass(new Date(start + 95 * 1000), d);
+    await runVerdictPass(new Date(start + 215 * 1000), d);
     const jessAlert = absent.find((m) => /Client:\*\* Jess/.test(m));
     assert.ok(jessAlert, `absent alerts: ${absent.join(' | ')}`);
     assert.match(jessAlert, /Double-booked:\*\* was in another meeting at the same time, Nishath/);
