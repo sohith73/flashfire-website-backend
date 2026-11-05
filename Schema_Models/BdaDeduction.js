@@ -23,6 +23,10 @@ const EvidenceSchema = new mongoose.Schema(
     extensionInCall: { type: mongoose.Schema.Types.Mixed, default: null },
     // Other meetings at the same time and whether the BDA was in one: [{ bookingId, clientName, attended }].
     doubleBookedWith: { type: Array, default: [] },
+    // missed_meeting: why the BDA counts as absent, 'no_signal' (never seen in time) or 'left_early' (in time, but
+    // out of the call before the minimum stay after the start). stayMs is the time in the call after the start.
+    absentReason: { type: String, enum: ['no_signal', 'left_early', null], default: null },
+    stayMs: { type: Number, default: null },
     // Set when a person wrote the fine: an admin marked a call absent, or approved a BDA's own report.
     manualAbsent: { type: mongoose.Schema.Types.Mixed, default: null },
     convertedFromFlag: {
@@ -54,7 +58,8 @@ const BdaDeductionSchema = new mongoose.Schema(
     evidence: { type: EvidenceSchema, default: () => ({}) },
     status: { type: String, enum: DEDUCTION_STATUSES, required: true },
     //  shadow        created while DEDUCTIONS_MODE=shadow, admins only
-    //  needs_review  a source it depends on was unhealthy (plan 2.7), an admin decides
+    //  needs_review  held for an admin: a source was unhealthy (plan 2.7), or a colleague / shared account /
+    //                the BDA's own extension shows the meeting was attended (evidence says which)
     //  active        counts toward pay and the monthly tier
     //  waived        an admin waived it with a reason
     //  voided        the system cancelled it (late evidence, meeting reassigned before the window)

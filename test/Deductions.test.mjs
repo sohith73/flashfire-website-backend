@@ -621,7 +621,7 @@ describe('no_show_not_called (plan 2.5, D1)', () => {
     assert.equal(rows[0].evidence.callSummary.calls, 1);
     assert.equal(rows[0].evidence.callSummary.calledWithin30Min, false);
     assert.equal(posts.length, 1);
-    assert.match(posts[0].content, /^<@111111111111111111> ₹100 deduction, Sid: no-show Client ns-late at 3:30 PM IST, no call within 30 min\.$/);
+    assert.match(posts[0].content, /^<@111111111111111111> ₹100 deduction, Sid: Client ns-late was a no-show at 3:30 PM IST and no Zoom call to them was found within 30 min\.$/);
   });
 
   it('holds the fine for review when a colleague covered the no-show meeting, and still fines when nobody did', async () => {
