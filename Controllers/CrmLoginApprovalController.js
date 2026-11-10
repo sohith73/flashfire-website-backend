@@ -72,7 +72,6 @@ export const approveLoginApproval = async (req, res) => {
       os: approval.os,
       deviceType: approval.deviceType,
       userAgent: approval.userAgent,
-      rememberMe: approval.expiresIn === "30d",
     });
 
     approval.status = "approved";

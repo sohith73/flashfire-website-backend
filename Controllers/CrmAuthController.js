@@ -18,9 +18,13 @@ import { isCrmAdmin } from '../Utils/isCrmAdmin.js';
  * Shared by the direct-login path and the "approval just granted" path so both
  * produce an identical session record.
  */
-export async function issueCrmSessionAndToken({ user, ip, countryCode, country, browser, os, deviceType, userAgent, rememberMe }) {
-  const expiresIn = rememberMe ? '30d' : '7d';
-  const expiresMs = rememberMe ? 30 * 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
+// Every CRM login lasts 30 days.
+const CRM_SESSION_EXPIRES_IN = '30d';
+const CRM_SESSION_EXPIRES_MS = 30 * 24 * 60 * 60 * 1000;
+
+export async function issueCrmSessionAndToken({ user, ip, countryCode, country, browser, os, deviceType, userAgent }) {
+  const expiresIn = CRM_SESSION_EXPIRES_IN;
+  const expiresMs = CRM_SESSION_EXPIRES_MS;
   const sessionId = crypto.randomUUID();
 
   const token = jwt.sign(
@@ -133,7 +137,6 @@ export async function verifyCrmOtp(req, res) {
   try {
     const email = normalizeEmail(req.body?.email);
     const otp = String(req.body?.otp || '').trim();
-    const rememberMe = Boolean(req.body?.rememberMe);
 
     if (!email || !isValidEmail(email)) return res.status(400).json({ success: false, error: 'Invalid email' });
     if (!/^\d{6}$/.test(otp)) return res.status(400).json({ success: false, error: 'Invalid OTP' });
@@ -183,7 +186,7 @@ export async function verifyCrmOtp(req, res) {
           deviceType,
           userAgent,
           status: 'pending',
-          expiresIn: rememberMe ? '30d' : '7d',
+          expiresIn: CRM_SESSION_EXPIRES_IN,
         });
 
         return res.status(200).json({
@@ -196,7 +199,7 @@ export async function verifyCrmOtp(req, res) {
     }
 
     const result = await issueCrmSessionAndToken({
-      user, ip, countryCode, country, browser, os, deviceType, userAgent, rememberMe,
+      user, ip, countryCode, country, browser, os, deviceType, userAgent,
     });
 
     return res.status(200).json({ success: true, ...result });
