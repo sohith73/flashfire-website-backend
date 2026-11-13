@@ -54,7 +54,7 @@ export function composeLetter({ level, bdaName, missedCount, windowFrom, windowT
   const intro = `This is your ${spec.title.toLowerCase()} letter. In the ${WARNING_WINDOW_DAYS} days from ${day(windowFrom)} to ${day(windowTo)}, the system recorded ${missedCount} meetings that you did not attend. Each one carries a deduction, and together they come to ${inr(totalAmountInr)}.`;
   const policy = `Our policy is a first warning at ${WARNING_LEVELS[0].threshold} missed meetings, a second at ${WARNING_LEVELS[1].threshold} and a third at ${WARNING_LEVELS[2].threshold}, counted over a rolling ${WARNING_WINDOW_DAYS} days.`;
   const ask = 'Please make sure you join every meeting assigned to you, on time. If you cannot take a meeting, tell an admin before it starts so it can be moved to a colleague.';
-  const dispute = 'If you believe any meeting below is wrong, reply to this email or contact an admin with the date and client. A meeting that is waived no longer counts.';
+  const dispute = 'If you believe any meeting in the list above is wrong, reply to this email or contact an admin with the date and client. A meeting that is waived no longer counts.';
   const shown = missed.slice(0, 40);
   const more = missed.length > shown.length ? `and ${missed.length - shown.length} more` : '';
   const lines = shown.map((m, i) => `${i + 1}. ${when(m.scheduledStart)} IST, ${m.clientName || 'client'} (${inr(m.amountInr)})`);
