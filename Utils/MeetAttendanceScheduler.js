@@ -483,10 +483,10 @@ async function processBookingInner(booking, now, deps = {}) {
       }
 
       // 2) Joined, but after the Mark Present window closed. The verdict job already told the channel "absent"
-      //    at start + 90 s; this confirms it from Google's exact join time. Skipped when the BDA was marked present
+      //    at start + 60 s; this confirms it from Google's exact join time. Skipped when the BDA was marked present
       //    in time by a button or the extension (the verdict is then present).
       const joinedLate = firstJoin && firstJoin.getTime() > scheduledStart.getTime() + LATE_AFTER_START_MS;
-      // Needs the verdict job's absent verdict first (written at start + 90 s, only for judged BDAs): a Google record
+      // Needs the verdict job's absent verdict first (written at start + 60 s, only for judged BDAs): a Google record
       // alone, for example the client sitting in the room before the start, must never produce an absent alert.
       if (alertable && joinedLate && existing?.verdict === 'absent' && !existing?.verifiedAbsentNotifiedAt) {
         const posted = await postAbsentChannel(
@@ -562,7 +562,7 @@ async function processBookingInner(booking, now, deps = {}) {
     );
 
     // Google confirms the call ran without the assigned BDA in it. Posted once per booking; the verdict job
-    // already announced the absence at start + 90 s, this is the verification. Not for canceled bookings, and not
+    // already announced the absence at start + 60 s, this is the verification. Not for canceled bookings, and not
     // when a button or the extension had the BDA present in time.
     if (alertable && existing?.verdict === 'absent' && !existing?.verifiedAbsentNotifiedAt) {
       const whoWasThere = participants.map((p) => p.displayName || 'Unknown').join(', ');

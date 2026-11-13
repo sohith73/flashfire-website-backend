@@ -502,16 +502,30 @@ describe('mark window and verdict (plan 2.2, 5.6)', () => {
     assert.equal(await rowOf(bookingId, NOBODY), null);
   });
 
-  it('does nothing before start + 3 min 30 s (window + 2 min minimum stay + settle)', async () => {
+  it('judges "nobody marked present" at start + 60 s, the moment the window closes', async () => {
     const start = Date.now() - 10 * MIN;
     const bookingId = await mkBooking({ start });
+    const { deps, posts } = mkDeps();
+    await runVerdictPass(new Date(start + 59 * 1000), deps);
+    assert.equal(await rowOf(bookingId), null);
+    await runVerdictPass(new Date(start + 60 * 1000), deps);
+    const row = await rowOf(bookingId);
+    assert.equal(row.verdict, 'absent');
+    assert.equal(row.verdictReason, 'no_signal');
+    assert.equal(posts.length, 1);
+  });
+
+  it('a BDA who marked present in time waits for the minimum-stay decision at start + 3 min 30 s', async () => {
+    const start = Date.now() - 10 * MIN;
+    const bookingId = await mkBooking({ start });
+    await recordPresentSignal({ bookingId, bdaEmail: SID, kind: 'button_meet', receivedAt: new Date(start + 10 * 1000) });
     const { deps } = mkDeps();
     await runVerdictPass(new Date(start + 90 * 1000), deps);
-    assert.equal(await rowOf(bookingId), null);
+    assert.equal((await rowOf(bookingId)).verdict ?? null, null);
     await runVerdictPass(new Date(start + 200 * 1000), deps);
-    assert.equal(await rowOf(bookingId), null);
+    assert.equal((await rowOf(bookingId)).verdict ?? null, null);
     await runVerdictPass(new Date(start + 210 * 1000), deps);
-    assert.equal((await rowOf(bookingId)).verdict, 'absent');
+    assert.equal((await rowOf(bookingId)).verdict, 'present');
   });
 
   it('calls the Meet verifier once per meeting and judges from what it stored', async () => {
