@@ -8,7 +8,7 @@ const PAID_PLANS = ['Ignite', 'Professional', 'Executive', 'Prime'];
  */
 export const getPaidClientsAnalytics = async (req, res) => {
   try {
-    const Model = getClientUserModel();
+    const Model = await getClientUserModel();
     if (!Model) {
       return res.status(503).json({
         success: false,

@@ -758,7 +758,8 @@ export async function getMyMeetings(req, res) {
     const horizonPast = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const horizonFuture = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
 
-    // Show ALL scheduled meetings to ALL BDAs (not filtered by claimedBy).
+    // List every scheduled meeting so a covering join can be matched by meet code, but with client details only
+    // on the requesting BDA's own meetings (see the dto below).
     //
     // Two queries on purpose. This used to be ONE query over [now - 7 d, now + 14 d] sorted oldest first with
     // .limit(100). Once the past week alone held 100 bookings, the limit was spent on past meetings and every
@@ -843,10 +844,14 @@ export async function getMyMeetings(req, res) {
 
     for (const b of bookings) {
       const start = b.scheduledEventStartTime ? new Date(b.scheduledEventStartTime) : null;
+      const mine = isBookingAssignedTo(b, emailNorm);
+      // Role control: a BDA gets full details only for their own meetings. A colleague's meeting keeps just what
+      // the extension needs to record a covering join (id, time, meet code, who it belongs to), never the client's
+      // name or email. Same keys either way, so the response shape does not change.
       const dto = {
         bookingId: b.bookingId,
-        clientName: b.clientName,
-        clientEmail: b.clientEmail,
+        clientName: mine ? b.clientName : "Colleague's meeting",
+        clientEmail: mine ? b.clientEmail : null,
         scheduledStart: b.scheduledEventStartTime,
         scheduledEnd: b.scheduledEventEndTime,
         googleMeetUrl: b.googleMeetUrl,
@@ -857,7 +862,7 @@ export async function getMyMeetings(req, res) {
         calendlyHost: b.calendlyHost && (b.calendlyHost.name || b.calendlyHost.email)
           ? { name: b.calendlyHost.name, email: b.calendlyHost.email }
           : null,
-        assignedToMe: isBookingAssignedTo(b, emailNorm),
+        assignedToMe: mine,
         attendance: attendanceByBooking[b.bookingId] || null,
       };
       if (start && start >= now) {

@@ -196,7 +196,7 @@ describe('pure rules', () => {
 // ---------------------------------------------------------------------------------------------------------
 describe('verdict health (finding 3: Google never checked this meeting)', () => {
   const startMs = Date.parse('2026-10-08T11:00:00Z');
-  const nowMs = startMs + 95 * 1000;
+  const nowMs = startMs + 215 * 1000;
   const deps = (beatMs) => ({
     health: { wasSourceHealthy: async () => true, syncOkBetween: async () => true },
     getHeartbeat: async () => (beatMs == null ? null : { lastHeartbeatAt: new Date(beatMs) }),
@@ -217,7 +217,7 @@ describe('verdict health (finding 3: Google never checked this meeting)', () => 
     const start = Date.now() - 10 * MIN;
     const bookingId = await mkBooking({ start });
     const verdicts = await runVerdictPass(
-      new Date(start + 95 * 1000),
+      new Date(start + 215 * 1000),
       healthyDeps({ meetVerifier: async () => ({ checked: false, reason: 'no_meet_code' }), getHeartbeat: async () => null })
     );
     const v = verdicts.verdicts.find((x) => x.bookingId === bookingId);
@@ -295,7 +295,7 @@ describe('finding 5: back-dated extension joins', () => {
     const row = await BdaAttendanceModel.findOne({ bookingId, bdaEmail: SID }).lean();
     const sig = row.signals.find((s) => s.kind === 'extension_join');
     assert.ok(new Date(sig.eventAt).getTime() >= Date.now() - 2 * MIN - 5000, 'clamped to at most 2 minutes before receipt');
-    await runVerdictPass(new Date(start + 95 * 1000), healthyDeps());
+    await runVerdictPass(new Date(start + 215 * 1000), healthyDeps());
     assert.equal((await BdaAttendanceModel.findOne({ bookingId, bdaEmail: SID }).lean()).verdict, 'absent');
   });
 });

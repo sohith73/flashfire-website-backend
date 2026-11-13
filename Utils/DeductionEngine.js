@@ -1,7 +1,7 @@
 import { refreshDeductionSettings, startDeductionSettingsRefresher } from './DeductionSettings.js';
 import { findOverlappingMeetings } from './DoubleBooking.js';
 import { bookingPhoneKey } from './CallLinking.js';
-import { countedSignals } from './recordPresentSignal.js';
+import { presenceVerdict, stayAfterStart, leftTooEarly, formatStay, MIN_STAY_MS } from './AttendanceStay.js';
 import { DateTime } from 'luxon';
 import { BdaDeductionModel } from '../Schema_Models/BdaDeduction.js';
 import { BdaDeductionDigestModel } from '../Schema_Models/BdaDeductionDigest.js';
@@ -114,7 +114,8 @@ export function makeContext(opts = {}) {
     loadAttendance:
       opts.loadAttendance ??
       (async (bookingId, bdaEmail) =>
-        BdaAttendanceModel.findOne({ bookingId, bdaEmail }).select('verdict verdictAt verdictCorrectedAt signals sessions joinedAt leftAt participantsAtJoin').lean()),
+        // sessions / joinedAt / leftAt / cumulativeDurationMs: the minimum-stay check (AttendanceStay.js) reads them.
+        BdaAttendanceModel.findOne({ bookingId, bdaEmail }).select('verdict verdictAt verdictCorrectedAt verdictReason signals sessions firstJoinedAt joinedAt leftAt cumulativeDurationMs participantsAtJoin').lean()),
     // Did the BDA's own extension report them in THIS meeting's call around the start? Returns { firstAt, lastAt } or null.
     loadInCall:
       opts.loadInCall ??
@@ -135,7 +136,7 @@ export function makeContext(opts = {}) {
       opts.loadCover ??
       (async (bookingId, bdaEmail) =>
         BdaAttendanceModel.find({ bookingId, bdaEmail: { $ne: bdaEmail } })
-          .select('bdaEmail bdaName status verdict signals firstJoinedAt joinedAt markedPresentAt durationMs cumulativeDurationMs joinDevice')
+          .select('bdaEmail bdaName status verdict signals sessions firstJoinedAt joinedAt leftAt markedPresentAt durationMs cumulativeDurationMs joinDevice')
           .lean()),
     _profiles: new Map(),
   };
@@ -324,10 +325,10 @@ function messageFor(row, name, client) {
   const at = start ? fmtTimeIst(start) : 'an unknown time';
   const who = client || 'the client';
   if (row.rule === 'no_show_not_called') {
-    return `${inr(row.amountInr)} deduction, ${name}: no-show ${who} at ${at}, no call within 30 min.`;
+    return `${inr(row.amountInr)} deduction, ${name}: ${who} was a no-show at ${at} and no Zoom call to them was found within 30 min.`;
   }
   if (row.rule === 'status_not_updated') {
-    return `${inr(row.amountInr)} deduction, ${name}: status for ${who} (${at}) still scheduled past the update deadline.`;
+    return `${inr(row.amountInr)} deduction, ${name}: the CRM status for ${who} (${at}) was still "scheduled" past the update deadline.`;
   }
   const tier = row.tierIndex ? ` (miss ${row.tierIndex} this month)` : '';
   const manual = row.evidence?.manualAbsent;
@@ -335,14 +336,46 @@ function messageFor(row, name, client) {
     const what = manual.kind === 'allocation' ? 'the allocated call' : 'the meeting';
     return `${inr(row.amountInr)} deduction, ${name}: marked absent for ${what} with ${who} at ${at}${tier}. Marked by ${manual.markedByName || manual.markedBy || 'an admin'}.`;
   }
-  return `${inr(row.amountInr)} deduction, ${name}: missed the meeting with ${who} at ${at}, not marked present in time${tier}.`;
+  if (row.evidence?.absentReason === 'left_early') {
+    const stayed = Number.isFinite(row.evidence?.stayMs) ? formatStay(row.evidence.stayMs) : 'less than the minimum';
+    return `${inr(row.amountInr)} deduction, ${name}: missed the meeting with ${who} at ${at}: joined the Google Meet but left too early (${stayed} after the start, ${formatStay(MIN_STAY_MS)} needed)${tier}.`;
+  }
+  return `${inr(row.amountInr)} deduction, ${name}: missed the meeting with ${who} at ${at}: not in the Google Meet and not marked present in time${tier}.`;
+}
+
+const listNames = (names) => (names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`);
+
+/**
+ * Why a row is held for review instead of counting, in words an admin can act on. Reads the evidence the rule
+ * stored; falls back to a plain "held for review" when a row predates these fields.
+ */
+export function reviewReason(row) {
+  const ev = row.evidence || {};
+  const covered = Array.isArray(ev.coveredBy) ? ev.coveredBy : [];
+  if (covered.length) {
+    const who = listNames(covered.map((c) => `${c.bdaName || String(c.bdaEmail || '').split('@')[0]}${Number.isFinite(c.minutes) ? ` (${c.minutes} min)` : ''}`));
+    const where = covered.every((c) => c.source === 'extension') ? 'the call' : 'the Google Meet call';
+    const verb = covered.length > 1 ? 'were' : 'was';
+    if (row.rule === 'no_show_not_called') return `held for review: ${who} ${verb} in ${where}, so calling the client may have been theirs`;
+    if (row.rule === 'status_not_updated') return `held for review: ${who} ${verb} in ${where}, so updating the status may have been theirs`;
+    return `held for review: ${who} ${verb} in ${where} instead`;
+  }
+  const staff = Array.isArray(ev.unattributedStaff) ? ev.unattributedStaff : [];
+  if (staff.length) return `held for review: a shared team account (${listNames(staff.map((x) => x.displayName || x.name || String(x)))}) was in the Google Meet call`;
+  if (ev.extensionInCall) return 'held for review: their extension reported them in the call, but Google Meet did not';
+  if (ev.healthy === false) {
+    if (row.rule === 'no_show_not_called') return 'held for review: the Zoom call log was not syncing during the call window';
+    if (row.rule === 'status_not_updated') return 'held for review: the attendance job was not running at the status deadline';
+    return 'held for review: the Google Meet attendance sync was not running at the meeting time';
+  }
+  return 'held for review';
 }
 
 /** Exported for tests. Wording per plan 8.2; `mention` is the BDA's `<@discordUserId>` when set. */
 export function formatDeductionMessage(row, { name, client, mention = null }) {
   const body = messageFor(row, name, client);
   if (row.status === 'shadow') return `[shadow, not counted] ${body}`;
-  if (row.status === 'needs_review') return `[needs review, source data was unhealthy, not counted] ${body}`;
+  if (row.status === 'needs_review') return `[${reviewReason(row)}, not counted yet] ${body}`;
   return mention ? `${mention} ${body}` : body;
 }
 
@@ -410,20 +443,25 @@ async function sweepVerdictHealthy(ctx, startMs, verdictAtMs) {
  * engine fines the assigned BDA, so a covered meeting looked like a miss: 20 of Kalpataru's October fines were this.
  * Returns [] when nobody covered it, or when the lookup fails (never block a fine on a lookup error).
  */
-async function coverFor(ctx, bookingId, email) {
+async function coverFor(ctx, bookingId, email, startMs) {
   try {
     const rows = await ctx.loadCover(bookingId, email);
     const out = [];
     for (const row of rows ?? []) {
       const seen = attendanceShowsPresent(row);
       if (!seen) continue;
+      // A colleague who popped in and out (record shows under MIN_STAY_MS in the call after the start) did not
+      // cover the meeting, so their visit does not hold the fine.
+      const stay = Number.isFinite(startMs) ? stayAfterStart(row, startMs, ctx.nowMs) : { known: false, ms: null };
+      if (leftTooEarly(stay)) continue;
       const who = norm(row.bdaEmail);
       const profile = await profileOf(ctx, who);
       out.push({
         bdaEmail: who,
         bdaName: profile?.displayName || row.bdaName || who.split('@')[0],
         joinedAt: seen.joinedAt ? seen.joinedAt.toISOString() : null,
-        minutes: seen.minutes,
+        minutes: stay.known ? Math.round(stay.ms / 60000) : seen.minutes,
+        source: row.sessions?.length ? 'google_meet' : 'extension',
       });
     }
     return out;
@@ -474,9 +512,11 @@ async function createMissedMeeting(ctx, { booking, bdaEmail, signals, healthy })
   const att = await ctx.loadAttendance(booking.bookingId, email);
   if (att && (att.verdict === 'present' || att.verdictCorrectedAt)) return { created: false, reason: 'verdict_corrected' };
   // Belt and braces: never fine while in-time evidence sits on the row, whatever the verdict field says.
-  if (att && countedSignals(att.signals, startMs, att).length > 0) return { created: false, reason: 'has_in_time_evidence' };
+  // Same rule as the verdict: in-time evidence only protects a BDA who also stayed the minimum after the start.
+  const presence = att ? presenceVerdict(att, startMs, ctx.nowMs) : null;
+  if (presence?.present) return { created: false, reason: 'has_in_time_evidence' };
 
-  const coveredBy = await coverFor(ctx, booking.bookingId, email);
+  const coveredBy = await coverFor(ctx, booking.bookingId, email, startMs);
   const unattributedStaff = sharedAccountsIn(att?.participantsAtJoin);
   const extensionInCall = await inCallFor(ctx, email, booking, startMs);
   const heldForReview = coveredBy.length > 0 || unattributedStaff.length > 0 || Boolean(extensionInCall);
@@ -492,6 +532,9 @@ async function createMissedMeeting(ctx, { booking, bdaEmail, signals, healthy })
     callSummary: plainJson(await callSummaryFor(ctx, booking)),
     clientName: booking.clientName ?? null,
     healthy: Boolean(healthy),
+    // Why the BDA counts as absent: 'no_signal' (never seen in time) or 'left_early' (left before the minimum stay).
+    absentReason: presence?.reason === 'left_early' ? 'left_early' : 'no_signal',
+    stayMs: presence?.stay?.known ? presence.stay.ms : null,
     // Double-booked: the other meeting(s) at the same time, and whether the BDA was in one. Admins decide on waivers.
     doubleBookedWith: plainJson(await overlappingFor(ctx, booking, email)),
   };
@@ -701,7 +744,7 @@ export async function evaluateNoShowNotCalled(opts = {}) {
         maxAgeMs: SYNC_LIMITS_MS.zoom_phone,
       });
       // A colleague covered the meeting, so ringing the no-show client was theirs to do: hold it for review.
-      const coveredBy = await coverFor(ctx, booking.bookingId, email);
+      const coveredBy = await coverFor(ctx, booking.bookingId, email, startMs);
       const row = await createAndAnnounce(
         ctx,
         {
@@ -767,7 +810,7 @@ export async function evaluateStatusNotUpdated(opts = {}) {
       const at = startMs + deadlineMs;
       const healthy = await ctx.syncRanBetween('verdict_job', at - 10 * MIN, at);
       // A colleague covered the meeting, so updating its status was theirs to do: hold it for review.
-      const coveredBy = await coverFor(ctx, booking.bookingId, email);
+      const coveredBy = await coverFor(ctx, booking.bookingId, email, startMs);
       const row = await createAndAnnounce(
         ctx,
         {

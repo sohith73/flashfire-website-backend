@@ -161,6 +161,20 @@ describe('my-meetings', () => {
     assert.equal(other.attendance.status, 'absent');
   });
 
+  it("gives client details only for the requester's own meetings, but keeps the meet code for covering joins", async () => {
+    const bookingId = await seedBooking();
+    const host = findMeeting((await call('GET', '/my-meetings', HOST)).body, bookingId);
+    assert.equal(host.clientName, 'Test Client');
+    assert.equal(host.clientEmail, `${bookingId}@example.com`);
+
+    const other = findMeeting((await call('GET', '/my-meetings', OTHER)).body, bookingId);
+    assert.equal(other.assignedToMe, false);
+    assert.equal(other.clientName, "Colleague's meeting");
+    assert.equal(other.clientEmail, null);
+    assert.equal(other.googleMeetCode, 'abc-defg-hij', 'still matchable when a colleague covers the call');
+    assert.deepEqual(Object.keys(other).sort(), Object.keys(host).sort(), 'same response shape for both');
+  });
+
   it('hides an unmarked row so Mark Present and auto-join stay available', async () => {
     const bookingId = await seedBooking();
     await BdaAttendanceModel.create({

@@ -160,6 +160,7 @@ import {
 import { crmAdminLogin, crmAdminRequestOtp, crmAdminVerifyOtp, listCrmUsers, createCrmUser, updateCrmUser, deleteCrmUser } from './Controllers/CrmAdminController.js';
 import { getActivityLogs, getActivityFilters } from './Controllers/ActivityLogController.js';
 import { getPaidClientsAnalytics } from './Controllers/PaidClientsController.js';
+import { getFunnelAnalytics } from './Controllers/FunnelAnalyticsController.js';
 import { getStripePaymentsByMonth, getStripeAllMonthsSummary, getStripePaidPlanMonthlySummary } from './Controllers/StripeDataController.js';
 import { getManualPaymentsByMonth, createManualPayment, updateManualPayment, deleteManualPayment } from './Controllers/ManualPaymentController.js';
 import { generatePaymentLink, redirectShortLink } from './Controllers/PaymentLinkController.js';
@@ -309,6 +310,9 @@ export default function Routes(app) {
 
   // Graphs module — paid-client analytics sourced from the clients-tracking DB.
   app.get('/api/crm/paid-clients/analytics', requireCrmUser, requireCrmAnyPermission(['leads', 'meta_leads', 'lead_analytics']), getPaidClientsAnalytics);
+
+  // Analytics tab — form → scheduled → attended → paid funnel table.
+  app.get('/api/crm/analytics/funnel', requireCrmUser, requireCrmAnyPermission(['leads', 'meta_leads', 'lead_analytics', 'all_data']), getFunnelAnalytics);
 
   // Graphs 03 — per-BDA performance: meetings vs paid, and no-show follow-up coverage.
   app.get('/api/crm/graphs03/bda-meetings', requireCrmUser, requireCrmAnyPermission(['graphs03', 'leads', 'meta_leads', 'lead_analytics', 'all_data']), getBdaMeetingsAnalytics);

@@ -6,6 +6,7 @@ import { EVENTS, emitAttendanceEvent } from './attendanceEvents.js';
 import { postAbsentChannel } from './attendanceDiscord.js';
 import { getAssignedBdaEmail } from './BdaAssignment.js';
 import { getBdaProfile } from './BdaRegistry.js';
+import { presenceVerdict } from './AttendanceStay.js';
 
 // The one place a "present" signal is stored (plan 2.2 and 5.3). The two Mark Present buttons, the extension's
 // join detection and the Google Meet sync all come through here, so every rule lives once. It returns a plain
@@ -222,9 +223,11 @@ export async function recordPresentSignal(input, deps = {}) {
     );
   }
 
-  // Late evidence: an absent verdict flips to present when proof of an in-window join arrives afterwards.
+  // Late evidence: an absent verdict flips to present when proof of an in-window join arrives afterwards, and the
+  // record does not show the BDA leaving before the minimum stay (a late Google record of a 40-second visit must not
+  // turn a left_early absent back into present).
   let correction = null;
-  if (counted && !isButton && row.verdict === 'absent') {
+  if (counted && !isButton && row.verdict === 'absent' && presenceVerdict(row, startMs, nowDate.getTime()).present) {
     correction = await applyLateCorrection({ row, booking, profile, kind, startMs, deps, now: nowDate });
   }
 
@@ -245,7 +248,7 @@ async function duplicateJoin(existing, kind, booking, profile, startMs, deps, no
   const stored = existing.signals.find((s) => s.kind === kind);
   const counted = signalCounts(stored, startMs, existing);
   let correction = null;
-  if (counted && existing.verdict === 'absent') {
+  if (counted && existing.verdict === 'absent' && presenceVerdict(existing, startMs, toMs(now)).present) {
     correction = await applyLateCorrection({ row: existing, booking, profile, kind, startMs, deps, now });
   }
   return { ok: true, marked: true, counted, duplicate: true, markedPresentAt: existing.markedPresentAt ?? null, correction, attendanceId: existing.attendanceId };
@@ -258,7 +261,7 @@ async function duplicateJoin(existing, kind, booking, profile, startMs, deps, no
 async function applyLateCorrection({ row, booking, profile, kind, startMs, deps, now }) {
   const flipped = await BdaAttendanceModel.findOneAndUpdate(
     { _id: row._id, verdict: 'absent' },
-    { $set: { verdict: 'present', verdictSignal: kind, verdictCorrectedAt: now } },
+    { $set: { verdict: 'present', verdictSignal: kind, verdictReason: 'present', verdictCorrectedAt: now } },
     { new: true }
   ).lean();
   if (!flipped) return null;

@@ -234,6 +234,11 @@ const BdaAttendanceSchema = new mongoose.Schema(
     verdictAt: { type: Date, default: null },
     /** Which signal won; null when absent */
     verdictSignal: { type: String, default: null },
+    // Why the verdict is what it is: 'present', 'no_signal' (nothing in time) or 'left_early' (in time, but out of
+    // the call before the minimum stay after the start, Utils/AttendanceStay.js). verdictStayMs is the time in the
+    // call after the start that the verdict saw, null when no record showed it.
+    verdictReason: { type: String, enum: ['present', 'no_signal', 'left_early', null], default: null },
+    verdictStayMs: { type: Number, default: null },
     /** Set when late evidence flips an absent verdict to present */
     verdictCorrectedAt: { type: Date, default: null },
 

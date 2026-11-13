@@ -209,3 +209,64 @@ export const getStripePaymentsByMonth = async (req, res) => {
     });
   }
 };
+
+const PAID_PAYMENTS_TTL_MS = 10 * 60 * 1000;
+const PLAN_LOOKUP_BATCH = 10;
+let paidPaymentsCache = { at: 0, rows: null };
+
+/**
+ * Every real-plan payment (Stripe succeeded charges + manual payments), add-ons and
+ * upgrades excluded — the same universe as getStripePaidPlanMonthlySummary. Cached for
+ * a few minutes since a cold load makes 2 Stripe calls per charge for the plan name.
+ * Rows: { email, date, amount, currency, planName, source }.
+ */
+export async function getPaidPlanPayments() {
+  if (paidPaymentsCache.rows && Date.now() - paidPaymentsCache.at < PAID_PAYMENTS_TTL_MS) {
+    return paidPaymentsCache.rows;
+  }
+  if (!stripe) throw new Error("Stripe not configured.");
+
+  let charges = [];
+  let startingAfter;
+  while (true) {
+    const page = await stripe.charges.list({ limit: 100, starting_after: startingAfter });
+    charges = charges.concat(page.data.filter((c) => c.status === "succeeded"));
+    if (!page.has_more) break;
+    startingAfter = page.data[page.data.length - 1].id;
+  }
+
+  const planNames = [];
+  for (let i = 0; i < charges.length; i += PLAN_LOOKUP_BATCH) {
+    const batch = charges.slice(i, i + PLAN_LOOKUP_BATCH);
+    planNames.push(...(await Promise.all(batch.map((c) => getPlanNameForCharge(c)))));
+  }
+
+  const rows = [];
+  charges.forEach((c, i) => {
+    if (isAddonOrUpgrade(planNames[i])) return;
+    rows.push({
+      email: String(c.billing_details?.email || c.receipt_email || "").trim().toLowerCase(),
+      date: new Date(c.created * 1000),
+      amount: c.amount / 100,
+      currency: c.currency.toUpperCase(),
+      planName: planNames[i],
+      source: "stripe",
+    });
+  });
+
+  const manualDocs = await ManualPaymentModel.find({}).lean();
+  for (const m of manualDocs) {
+    if (isAddonOrUpgrade(m.planName)) continue;
+    rows.push({
+      email: String(m.customerEmail || "").trim().toLowerCase(),
+      date: new Date(m.date),
+      amount: m.amount,
+      currency: String(m.currency || "").toUpperCase(),
+      planName: m.planName,
+      source: "manual",
+    });
+  }
+
+  paidPaymentsCache = { at: Date.now(), rows };
+  return rows;
+}

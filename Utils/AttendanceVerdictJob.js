@@ -11,10 +11,12 @@ import { getBdaProfile, getTrackedBdas } from './BdaRegistry.js';
 import { finesAreLive } from './deductionPolicy.js';
 import { doubleBookedLine, findOverlappingMeetings } from './DoubleBooking.js';
 import { SYNC_LIMITS_MS, getAllSyncHealth, recordSyncError, recordSyncOk, syncOkBetween, wasSourceHealthy } from './SyncHealth.js';
-import { WINDOW_CLOSES_AFTER_MS, VERDICT_SETTLE_MS, countedSignals, formatIstTime } from './recordPresentSignal.js';
+import { WINDOW_CLOSES_AFTER_MS, VERDICT_SETTLE_MS, formatIstTime } from './recordPresentSignal.js';
+import { MIN_STAY_MS, presenceVerdict, formatStay } from './AttendanceStay.js';
 
 // The server decides who was present (plan 2.2, 5.4). One job, several steps on different clocks:
-//   every 5 s   verdicts for meetings whose window closed (start + 60 s); its own loop so nothing below can delay it
+//   every 5 s   verdicts, on their own timer: start + 60 s when nobody marked present in time (the absent alert),
+//                start + 3 min 30 s for everyone else (window + 2 min minimum stay + settle)
 //   every 60 s  "your extension is offline" warning 9 to 11 minutes before a meeting
 //   every 5 min integrity check (button without a join) and sync-health alerts
 //   daily 18:00 IST  meetings tomorrow whose BDA is on leave
@@ -25,14 +27,19 @@ const HOUSEKEEPING_EVERY_MS = 15 * 1000;
 const HEARTBEAT_ALERT_EVERY_MS = 60 * 1000;
 const SLOW_STEPS_EVERY_MS = 5 * 60 * 1000;
 
-const VERDICT_DELAY_MS = WINDOW_CLOSES_AFTER_MS + VERDICT_SETTLE_MS; // 60 s after start
+// Two decision points. A BDA who gave NO present signal in time is absent the moment the window closes (start + 60 s):
+// how long they would have stayed is moot, so the alert goes out right then. Everyone else waits until a BDA who joined
+// at the last allowed moment (start + 60 s) could have stayed the minimum MIN_STAY_MS, plus the settle time for
+// Google's records: start + 3 min 30 s. That later point decides present vs left early.
+const NO_SIGNAL_DELAY_MS = WINDOW_CLOSES_AFTER_MS;
+const VERDICT_DELAY_MS = WINDOW_CLOSES_AFTER_MS + MIN_STAY_MS + VERDICT_SETTLE_MS;
 // One live Google check per meeting runs before the verdict. Capped so a slow Google call delays the absent alert by
 // at most this long (it used to be 20 s per meeting, one after another). If Google did not answer in time the
 // verdict is marked unhealthy, so a fine goes to review instead of being applied.
 const GOOGLE_CHECK_TIMEOUT_MS = Number(process.env.VERDICT_GOOGLE_CHECK_MS) || 5000;
 // Meetings judged at the same moment (a busy :00 or :30 slot) run in parallel batches of this size.
 const VERDICT_CONCURRENCY = 5;
-// A verdict written later than this after the window closed gets a warning, so a stalled loop shows in the logs.
+// A verdict written later than this after its decision point gets a warning, so a stalled loop shows in the logs.
 const VERDICT_LATE_WARN_MS = 15 * 1000;
 const LOOKBACK_MS = 24 * 60 * 60 * 1000;
 const JOB_HEALTH_DEADLINE_MS = 5 * 60 * 1000; // plan 2.7: the job must have run by start + 5 min
@@ -122,19 +129,37 @@ export async function computeVerdictHealth({ startMs, nowMs, bdaEmail, googleChe
 }
 
 /**
- * Write the verdict for every countable meeting whose window closed at least 60 s ago and has none yet.
+ * Write the verdict for every countable meeting that has none yet: at start + 60 s when no present signal arrived
+ * in time, at start + VERDICT_DELAY_MS for the rest (see writeVerdict).
  * Returns { checked, verdicts: [{ bookingId, bdaEmail, verdict }] } for the verdicts THIS call wrote.
  */
 /**
- * The immediate absent alert. Posted at start + 60 s, the moment the verdict is written; Google's own confirmation
- * ("verified from Google Meet records") follows from MeetAttendanceScheduler once its data has settled.
+ * The immediate absent alert. Posted the moment the verdict is written: start + 60 s when nobody marked present in
+ * time, start + 3 min 30 s when the BDA joined but left early. Google's own confirmation ("verified from Google Meet
+ * records") follows from MeetAttendanceScheduler once its data has settled.
+ * `leftEarly` is set when the BDA was there in time but left before staying MIN_STAY_MS after the start.
  */
-function absentAlertMessage({ who, bdaEmail, clientName, startMs, roster, doubleBooked = '' }) {
+function absentAlertMessage({ who, bdaEmail, clientName, startMs, roster, doubleBooked = '', leftEarly = null }) {
+  const when = DateTime.fromMillis(startMs, { zone: 'Asia/Kolkata' }).toFormat('dd MMM yyyy, hh:mm a');
+  if (leftEarly) {
+    return (
+      `🚫 **BDA Absent: left the call too early**\n` +
+      `**BDA:** ${who} (${bdaEmail})\n` +
+      `**Client:** ${clientName || 'the client'}\n` +
+      `**Meeting:** ${when}\n` +
+      (leftEarly.leftAt ? `**Left the call at:** ${formatIstTime(leftEarly.leftAt)}\n` : '') +
+      `**In the call after the start:** ${formatStay(leftEarly.ms)} (at least ${formatStay(MIN_STAY_MS)} needed)\n` +
+      (roster ? `**Who was in the call:** ${roster}\n` : '') +
+      doubleBooked +
+      `_Joined in time but did not stay in the meeting, so attendance is not counted._` +
+      (finesAreLive() ? ' A fine applies per policy.' : '')
+    );
+  }
   return (
     `🚫 **BDA Absent**\n` +
     `**BDA:** ${who} (${bdaEmail})\n` +
     `**Client:** ${clientName || 'the client'}\n` +
-    `**Meeting:** ${DateTime.fromMillis(startMs, { zone: 'Asia/Kolkata' }).toFormat('dd MMM yyyy, hh:mm a')}\n` +
+    `**Meeting:** ${when}\n` +
     `**Not marked present by:** ${formatIstTime(startMs + WINDOW_CLOSES_AFTER_MS)}\n` +
     (roster ? `**Who was in the call:** ${roster}\n` : '') +
     doubleBooked +
@@ -174,6 +199,7 @@ async function retryPendingAbsentAlerts(nowMs, d) {
         clientName: booking.clientName,
         startMs: toMs(booking.scheduledEventStartTime),
         roster: (row.participantsAtJoin || []).map((p) => p.displayName).filter(Boolean).join(', '),
+        leftEarly: row.verdictReason === 'left_early' ? { ms: row.verdictStayMs, leftAt: row.leftAt || null } : null,
       }),
       'absent-retry'
     );
@@ -190,7 +216,7 @@ export async function runVerdictPass(now = new Date(), deps = {}) {
   const bookings = await CampaignBookingModel.find(
     withFilter(
       {
-        scheduledEventStartTime: { $gte: new Date(nowMs - LOOKBACK_MS), $lte: new Date(nowMs - VERDICT_DELAY_MS) },
+        scheduledEventStartTime: { $gte: new Date(nowMs - LOOKBACK_MS), $lte: new Date(nowMs - NO_SIGNAL_DELAY_MS) },
         $or: ASSIGNED_ANYONE,
       },
       d
@@ -231,11 +257,6 @@ export async function runVerdictPass(now = new Date(), deps = {}) {
     const batch = due.slice(i, i + VERDICT_CONCURRENCY);
     const results = await Promise.all(
       batch.map(async ({ booking, bdaEmail, profile }) => {
-        const startMs = toMs(booking.scheduledEventStartTime);
-        const lateBy = nowMs - startMs - VERDICT_DELAY_MS;
-        if (lateBy > VERDICT_LATE_WARN_MS) {
-          console.warn(`[AttendanceVerdict] verdict for ${booking.bookingId} is ${Math.round(lateBy / 1000)} s later than start + ${VERDICT_DELAY_MS / 1000} s; the loop was stalled or the job just restarted`);
-        }
         try {
           return await writeVerdict({ booking, bdaEmail, profile, nowMs, now: new Date(nowMs) }, d);
         } catch (err) {
@@ -252,6 +273,15 @@ export async function runVerdictPass(now = new Date(), deps = {}) {
 
 async function writeVerdict({ booking, bdaEmail, profile, nowMs, now }, d) {
   const startMs = toMs(booking.scheduledEventStartTime);
+
+  // Before the later decision point only "nobody marked present in time" can be decided. Someone who did give a
+  // signal waits for the minimum-stay check, so skip them here without spending a Google call every tick.
+  const tooEarlyForStay = nowMs - startMs < VERDICT_DELAY_MS;
+  if (tooEarlyForStay) {
+    const stored = await BdaAttendanceModel.findOne({ bookingId: booking.bookingId, bdaEmail }).lean();
+    if (stored?.verdict) return null;
+    if (presenceVerdict(stored, startMs, nowMs).reason !== 'no_signal') return null;
+  }
 
   // One live Google check per meeting, then judge from what is stored. The verifier never throws, but a fake might.
   // Bounded: one hung Google call must not stall the alert (or every verdict behind it).
@@ -271,12 +301,28 @@ async function writeVerdict({ booking, bdaEmail, profile, nowMs, now }, d) {
   const row = await BdaAttendanceModel.findOne({ bookingId: booking.bookingId, bdaEmail }).lean();
   if (row?.verdict) return null; // an overlapping pass or another instance got there first
 
-  const counted = countedSignals(row?.signals, startMs, row);
-  const verdict = counted.length > 0 ? 'present' : 'absent';
-  const verdictSignal = counted[0]?.kind ?? null;
+  // One rule for "was the BDA there": an in-time signal AND no proof of leaving before MIN_STAY_MS after the start.
+  const judged = presenceVerdict(row, startMs, nowMs);
+  // The Google check may have just shown an in-time join: that BDA now waits for the minimum-stay decision.
+  if (tooEarlyForStay && judged.reason !== 'no_signal') return null;
+  const dueAtMs = startMs + (judged.reason === 'no_signal' ? NO_SIGNAL_DELAY_MS : VERDICT_DELAY_MS);
+  if (nowMs - dueAtMs > VERDICT_LATE_WARN_MS) {
+    console.warn(`[AttendanceVerdict] verdict for ${booking.bookingId} is ${Math.round((nowMs - dueAtMs) / 1000)} s past its decision point; the loop was stalled or the job just restarted`);
+  }
+  const verdict = judged.present ? 'present' : 'absent';
+  const verdictSignal = judged.counted[0]?.kind ?? null;
 
   const base = { bookingId: booking.bookingId, bdaEmail, verdict: null };
-  const update = { $set: { verdict, verdictAt: now, verdictSignal, verdictAlertPending: verdict === 'absent' } };
+  const update = {
+    $set: {
+      verdict,
+      verdictAt: now,
+      verdictSignal,
+      verdictReason: judged.reason,
+      verdictStayMs: judged.stay.known ? judged.stay.ms : null,
+      verdictAlertPending: verdict === 'absent',
+    },
+  };
   if (!row) {
     update.$setOnInsert = {
       attendanceId: `bda_att_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`,
@@ -307,11 +353,11 @@ async function writeVerdict({ booking, bdaEmail, profile, nowMs, now }, d) {
   // alerts and never fines. A signal pushed after this re-read sees verdict 'absent' and corrects it itself.
   if (verdict === 'absent') {
     const after = await BdaAttendanceModel.findOne({ bookingId: booking.bookingId, bdaEmail }).lean();
-    const late = countedSignals(after?.signals, startMs, after);
-    if (late.length > 0) {
+    const late = presenceVerdict(after, startMs, nowMs);
+    if (late.present) {
       await BdaAttendanceModel.updateOne(
         { bookingId: booking.bookingId, bdaEmail, verdict: 'absent' },
-        { $set: { verdict: 'present', verdictSignal: late[0].kind, verdictCorrectedAt: now, verdictAlertPending: false } }
+        { $set: { verdict: 'present', verdictSignal: late.counted[0].kind, verdictReason: 'present', verdictCorrectedAt: now, verdictAlertPending: false } }
       );
       return { bookingId: booking.bookingId, bdaEmail, verdict: 'present', healthy: true, raceCorrected: true };
     }
@@ -329,7 +375,15 @@ async function writeVerdict({ booking, bdaEmail, profile, nowMs, now }, d) {
     }
     const delivered = await safePost(
       d.poster,
-      absentAlertMessage({ who, bdaEmail, clientName: booking.clientName, startMs, roster: (row?.participantsAtJoin || []).map((p) => p.displayName).filter(Boolean).join(', '), doubleBooked }),
+      absentAlertMessage({
+        who,
+        bdaEmail,
+        clientName: booking.clientName,
+        startMs,
+        roster: (row?.participantsAtJoin || []).map((p) => p.displayName).filter(Boolean).join(', '),
+        doubleBooked,
+        leftEarly: judged.reason === 'left_early' ? judged.stay : null,
+      }),
       'absent'
     );
     // Delivered: clear the flag. Not delivered (Discord down): leave it set so the next pass retries the alert.

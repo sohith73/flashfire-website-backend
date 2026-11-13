@@ -18,7 +18,7 @@ const CrmLoginApprovalSchema = new mongoose.Schema({
   status: { type: String, enum: ['pending', 'approved', 'denied'], default: 'pending', index: true },
   resolvedBy: { type: String },
   resolvedAt: { type: Date },
-  expiresIn: { type: String }, // '7d' | '30d' — remembered so approval can issue the right-lived JWT
+  expiresIn: { type: String }, // always '30d' now; kept for older records
   issuedToken: { type: String }, // set once approved; cleared after the BDA's poll picks it up
 }, { timestamps: true });
 

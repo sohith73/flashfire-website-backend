@@ -289,7 +289,7 @@ describe('Discord wording', () => {
 
   it('matches the plan example and mentions the BDA when a Discord id is set', () => {
     const text = formatDeductionMessage(base, { name: 'Kalpataru', client: 'Test Client', mention: '<@1234567890123456>' });
-    assert.equal(text, '<@1234567890123456> ₹100 deduction, Kalpataru: no-show Test Client at 4:30 PM IST, no call within 30 min.');
+    assert.equal(text, '<@1234567890123456> ₹100 deduction, Kalpataru: Test Client was a no-show at 4:30 PM IST and no Zoom call to them was found within 30 min.');
     assert.ok(!text.includes(String.fromCharCode(0x2014)), 'no em dash');
   });
 
@@ -298,7 +298,40 @@ describe('Discord wording', () => {
     assert.ok(shadow.startsWith('[shadow, not counted]'));
     assert.ok(!shadow.includes('<@1>'));
     const review = formatDeductionMessage({ ...base, status: 'needs_review' }, { name: 'Kalpataru', client: 'X', mention: '<@1>' });
-    assert.ok(review.startsWith('[needs review'));
+    assert.ok(review.startsWith('[held for review, not counted yet]'));
+    assert.ok(!review.includes('<@1>'));
+  });
+
+  // 2026-11-05: every held row said "source data was unhealthy" while the data was healthy and a colleague had
+  // covered the call. The reason is now read from the evidence.
+  it('a held row says WHY it is held, never a generic "unhealthy"', () => {
+    const covered = [{ bdaEmail: 'kal@x.com', bdaName: 'Kalpataru', minutes: 12, source: 'google_meet' }];
+    const held = (rule, evidence) =>
+      formatDeductionMessage({ ...base, rule, status: 'needs_review', evidence: { ...base.evidence, healthy: true, ...evidence } }, { name: 'Ritika', client: 'Vipul' });
+
+    assert.equal(
+      held('no_show_not_called', { coveredBy: covered }),
+      '[held for review: Kalpataru (12 min) was in the Google Meet call, so calling the client may have been theirs, not counted yet] ₹100 deduction, Ritika: Vipul was a no-show at 4:30 PM IST and no Zoom call to them was found within 30 min.'
+    );
+    assert.match(held('status_not_updated', { coveredBy: covered }), /^\[held for review: Kalpataru \(12 min\) was in the Google Meet call, so updating the status may have been theirs, not counted yet\]/);
+    assert.match(held('missed_meeting', { coveredBy: [...covered, { bdaEmail: 's@x.com', bdaName: 'Siddhartha', minutes: 5, source: 'extension' }] }), /Kalpataru \(12 min\) and Siddhartha \(5 min\) were in the Google Meet call instead/);
+    assert.match(held('missed_meeting', { unattributedStaff: [{ displayName: 'Flashfire Team' }] }), /a shared team account \(Flashfire Team\) was in the Google Meet call/);
+    assert.match(held('missed_meeting', { extensionInCall: { at: new Date() } }), /extension reported them in the call, but Google Meet did not/);
+    assert.match(held('no_show_not_called', { healthy: false }), /the Zoom call log was not syncing during the call window/);
+    assert.match(held('missed_meeting', { healthy: false }), /the Google Meet attendance sync was not running/);
+    for (const rule of ['no_show_not_called', 'status_not_updated', 'missed_meeting']) {
+      assert.ok(!held(rule, { coveredBy: covered }).includes('unhealthy'));
+    }
+  });
+
+  it('a missed meeting says whether the BDA never joined or left too early', () => {
+    const miss = (evidence) =>
+      formatDeductionMessage({ rule: 'missed_meeting', amountInr: 500, status: 'active', evidence: { scheduledStart: base.evidence.scheduledStart, ...evidence } }, { name: 'Ritika', client: 'Jason' });
+    assert.equal(miss({}), '₹500 deduction, Ritika: missed the meeting with Jason at 4:30 PM IST: not in the Google Meet and not marked present in time.');
+    assert.equal(
+      miss({ absentReason: 'left_early', stayMs: 40_000 }),
+      '₹500 deduction, Ritika: missed the meeting with Jason at 4:30 PM IST: joined the Google Meet but left too early (40 s after the start, 2 min needed).'
+    );
   });
 
   it('daily summary lists meetings, presence, calls, pending statuses and the day deductions', () => {
