@@ -200,3 +200,13 @@ export async function sendBdaClaimApprovalEmail(recipients, approval, booking) {
     await sgMail.send(msg);
   }
 }
+/** One warning letter to a BDA, with the admins copied. Throws on a SendGrid error so the caller can record it. */
+export async function sendWarningLetterEmail({ to, cc = [], subject, text, html }) {
+  if (!process.env.SENDGRID_API_KEY || !process.env.SENDGRID_FROM_EMAIL) {
+    throw new Error("Email is not configured (SENDGRID_API_KEY / SENDGRID_FROM_EMAIL)");
+  }
+  const msg = { to, from: process.env.SENDGRID_FROM_EMAIL, subject, text, html };
+  const copies = (cc || []).filter((e) => e && e.toLowerCase() !== String(to).toLowerCase());
+  if (copies.length) msg.cc = copies;
+  await sgMail.send(msg);
+}
