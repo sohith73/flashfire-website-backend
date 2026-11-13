@@ -18,13 +18,8 @@ const BUTTON_KINDS = new Set(['button_meet', 'button_crm']);
 /** The mark window is [start - 5 min, start + 60 s] on the server clock. */
 export const WINDOW_OPENS_BEFORE_MS = 5 * 60 * 1000;
 export const WINDOW_CLOSES_AFTER_MS = 60 * 1000;
-/**
- * After the window closes the verdict waits this long. It is 0 on purpose: the absent alert must read "not marked
- * present by 2:01" and arrive at 2:01, not 30 s later. Google's records are not needed for the first alert: the
- * Google-verified follow-up and the late-signal correction (a present signal that lands after the verdict flips it
- * back) both still run afterwards.
- */
-export const VERDICT_SETTLE_MS = 0;
+/** After the window closes the verdict waits this long for Google's records to land. */
+export const VERDICT_SETTLE_MS = 30 * 1000;
 
 const normEmail = (e) => String(e ?? '').trim().toLowerCase();
 const toMs = (d) => (d instanceof Date ? d.getTime() : new Date(d).getTime());
