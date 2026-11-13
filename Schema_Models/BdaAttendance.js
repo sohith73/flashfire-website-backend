@@ -204,7 +204,7 @@ const BdaAttendanceSchema = new mongoose.Schema(
     verifiedRecapDurationMs: { type: Number, default: null },
     verifiedAbsentNotifiedAt: { type: Date, default: null },
     // True from the moment an absent verdict is written until its Discord alert is actually delivered. If Discord was
-    // down at start + 90 s the verdict job retries the alert, instead of the verdict existing with nobody told.
+    // down at start + 60 s the verdict job retries the alert, instead of the verdict existing with nobody told.
     verdictAlertPending: { type: Boolean, default: false },
 
     // ---- Server-decided attendance (plan sections 2.2 and 5.2) ----

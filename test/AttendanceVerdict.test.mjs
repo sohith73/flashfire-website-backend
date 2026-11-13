@@ -502,13 +502,13 @@ describe('mark window and verdict (plan 2.2, 5.6)', () => {
     assert.equal(await rowOf(bookingId, NOBODY), null);
   });
 
-  it('does nothing before start + 90 s', async () => {
+  it('does nothing before start + 60 s, then judges the moment the window closes', async () => {
     const start = Date.now() - 10 * MIN;
     const bookingId = await mkBooking({ start });
     const { deps } = mkDeps();
-    await runVerdictPass(new Date(start + 80 * 1000), deps);
+    await runVerdictPass(new Date(start + 59 * 1000), deps);
     assert.equal(await rowOf(bookingId), null);
-    await runVerdictPass(new Date(start + 90 * 1000), deps);
+    await runVerdictPass(new Date(start + 60 * 1000), deps);
     assert.equal((await rowOf(bookingId)).verdict, 'absent');
   });
 
