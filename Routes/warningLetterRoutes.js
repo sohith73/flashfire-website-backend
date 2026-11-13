@@ -1,6 +1,6 @@
 import { BdaWarningLetterModel, WARNING_STATUSES } from '../Schema_Models/BdaWarningLetter.js';
 import { isCrmAdmin } from '../Utils/isCrmAdmin.js';
-import { WARNING_LEVELS, WARNING_WINDOW_DAYS, announceWarningLetter as announce, dismissLetter, evaluateWarningLetters, getWarningMode, sendLetter, warningStandings } from '../Utils/WarningLetters.js';
+import { WARNING_LEVELS, dismissLetter, evaluateWarningLetters, getWarningMode, sendLetter, warningStandings, warningWindow } from '../Utils/WarningLetters.js';
 import { actorOf, requireCrmUserOrAdmin } from './deductionRoutes.js';
 
 // Warning letters API. A BDA reads their own SENT letters; an admin sees every letter, the live standings, and can
@@ -70,7 +70,7 @@ export function registerWarningLetterRoutes(app) {
       const body = {
         success: true,
         mode: getWarningMode(),
-        windowDays: WARNING_WINDOW_DAYS,
+        window: (() => { const w = warningWindow(); return w ? { from: w.from.toISOString(), to: w.to.toISOString(), label: w.label } : null; })(),
         policy: WARNING_LEVELS.map(({ level, threshold, title }) => ({ level, threshold, title })),
         letters: rows.map(toLetterRow),
       };
@@ -92,7 +92,7 @@ export function registerWarningLetterRoutes(app) {
     try {
       if (!(await requestIsAdmin(req))) return fail(res, 403, 'forbidden', 'Admin access required');
       if (getWarningMode() === 'off') return fail(res, 409, 'warnings_off', 'Warning letters are switched off (WARNING_LETTERS_MODE=off)');
-      const result = await evaluateWarningLetters(new Date(), { announce });
+      const result = await evaluateWarningLetters(new Date());
       return res.status(200).json({ success: true, ...result });
     } catch (err) {
       console.error('[warningLetterRoutes] evaluate failed:', err?.message);
@@ -103,7 +103,7 @@ export function registerWarningLetterRoutes(app) {
   app.post(`${BASE}/:id/send`, requireCrmUserOrAdmin, async (req, res) => {
     try {
       if (!(await requestIsAdmin(req))) return fail(res, 403, 'forbidden', 'Admin access required');
-      const result = await sendLetter(String(req.params.id), actorOf(req).email || 'admin', { announce });
+      const result = await sendLetter(String(req.params.id), actorOf(req).email || 'admin');
       if (!result.ok) return fail(res, result.status, result.code, result.message);
       return res.status(200).json({ success: true, letter: toLetterRow(result.letter) });
     } catch (err) {

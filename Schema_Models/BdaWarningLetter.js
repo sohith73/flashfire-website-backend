@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 
-// One row per warning letter to a BDA about missed meetings in a rolling 30 days (see Utils/WarningLetters.js).
+// One row per warning letter to a BDA about missed meetings in a calendar month (see Utils/WarningLetters.js).
 // A letter starts as a draft an admin can read, send or dismiss; in live mode the system sends it at once.
 // Rows are never deleted: the subject and body are stored exactly as they were (or would be) sent.
 

@@ -11,7 +11,7 @@ import { CampaignBookingModel } from '../Schema_Models/CampaignBooking.js';
 import { attendanceEvents, EVENTS } from './attendanceEvents.js';
 import { countableReason, getAssignedBdaEmail, isAfterGoLive, statusAtStart } from './BdaAssignment.js';
 import { isLeaveDayFor, workDayOf, workMonthOf } from './WorkDay.js';
-import { announceWarningLetter, evaluateWarningLetters } from './WarningLetters.js';
+import { evaluateWarningLetters } from './WarningLetters.js';
 import { getBdaProfile, getTrackedBdas } from './BdaRegistry.js';
 import { getCallSummaries } from './BookingCallSummary.js';
 import { SYNC_LIMITS_MS, syncOkBetween, wasSourceHealthy } from './SyncHealth.js';
@@ -863,8 +863,8 @@ export async function runDeductionEvaluators(now = new Date(), opts = {}) {
   await step('missedMeeting', () => evaluateMissedMeetings(ctxOpts));
   await step('noShowNotCalled', () => evaluateNoShowNotCalled(ctxOpts));
   await step('statusNotUpdated', () => evaluateStatusNotUpdated(ctxOpts));
-  // Warning letters at 7, 10 and 15 misses in a rolling 30 days (a draft for admins, or sent, by WARNING_LETTERS_MODE).
-  await step('warningLetters', () => evaluateWarningLetters(new Date(ctx.nowMs), { announce: announceWarningLetter }));
+  // Warning letters at 7, 10 and 15 misses in the current calendar month (a draft for admins, or sent, by WARNING_LETTERS_MODE).
+  await step('warningLetters', () => evaluateWarningLetters(new Date(ctx.nowMs), {}));
   // Self-heal: recompute the current and previous IST month for every BDA that has a miss row.
   await step('repriced', async () => {
     const months = [workMonthOf(ctx.nowMs), workMonthOf(ctx.nowMs - 31 * 24 * 60 * MIN)];

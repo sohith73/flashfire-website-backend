@@ -1,4 +1,4 @@
-// Warning letters at 7, 10 and 15 missed meetings in a rolling 30 days: policy, drafting, sending, the API.
+// Warning letters at 7, 10 and 15 missed meetings in a calendar month, counted from 13 Nov 2026: policy, drafting, sending, the API.
 import { describe, it, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
@@ -13,7 +13,7 @@ import { CrmUserModel } from '../Schema_Models/CrmUser.js';
 import { BdaDeductionModel } from '../Schema_Models/BdaDeduction.js';
 import { BdaWarningLetterModel } from '../Schema_Models/BdaWarningLetter.js';
 import { invalidateRegistryCache } from '../Utils/BdaRegistry.js';
-import { WARNING_LEVELS, composeLetter, dismissLetter, evaluateWarningLetters, levelForCount, nextThreshold, sendLetter, warningStandings } from '../Utils/WarningLetters.js';
+import { WARNING_LEVELS, composeLetter, dismissLetter, evaluateWarningLetters, levelForCount, nextThreshold, sendLetter, warningStandings, warningWindow } from '../Utils/WarningLetters.js';
 import { registerWarningLetterRoutes } from '../Routes/warningLetterRoutes.js';
 
 const BDA = 'warn-bda@test.local';
@@ -21,7 +21,7 @@ const OTHER = 'warn-other@test.local';
 const ADMIN = 'warn-admin@test.local';
 const BASE = '/api/crm/warning-letters';
 const DAY = 24 * 3600 * 1000;
-const NOW = new Date('2026-11-13T06:00:00Z');
+const NOW = new Date('2026-11-20T06:00:00Z');
 let server;
 let baseUrl;
 let seq = 0;
@@ -86,8 +86,8 @@ describe('policy', () => {
 
   it('writes a plain and an HTML letter that name the count, the window and each meeting', () => {
     const missed = [{ clientName: 'Pavel <b>Novak</b>', scheduledStart: new Date('2026-11-10T20:00:00Z'), amountInr: 500 }];
-    const l = composeLetter({ level: 2, bdaName: 'Warn Bda', missedCount: 10, windowFrom: new Date('2026-10-14T06:00:00Z'), windowTo: NOW, missed, totalAmountInr: 5000 });
-    assert.match(l.subject, /^Second warning: 10 missed meetings/);
+    const l = composeLetter({ level: 2, bdaName: 'Warn Bda', missedCount: 10, windowFrom: new Date('2026-11-12T18:30:00Z'), windowTo: NOW, windowLabel: 'November 2026', missed, totalAmountInr: 5000 });
+    assert.match(l.subject, /^Second warning: 10 missed meetings in November 2026$/);
     assert.match(l.bodyText, /Hi Warn,/);
     assert.match(l.bodyText, /₹5,000/);
     assert.match(l.bodyText, /Pavel <b>Novak<\/b>/, 'plain text is not escaped');
@@ -129,10 +129,11 @@ describe('evaluateWarningLetters', () => {
     assert.deepEqual((await BdaWarningLetterModel.find({ bdaEmail: BDA }).sort({ level: 1 }).lean()).map((l) => l.level), [1, 2]);
   });
 
-  it('counts only active fines inside the rolling 30 days', async () => {
+  it('counts only active fines from the launch day to the end of the month', async () => {
     await fines(BDA, 5);
     await fines(BDA, 5, { status: 'waived' });
     await fines(BDA, 5, { status: 'needs_review' });
+    await fines(BDA, 5, { daysAgo: 10 }); // 10 Nov, before counting starts on 13 Nov
     await fines(BDA, 5, { daysAgo: 45 });
     assert.equal((await evaluateWarningLetters(NOW, deps({ mode: 'draft' }))).created.length, 0);
     const standing = (await warningStandings(NOW)).find((s) => s.bdaEmail === BDA);
@@ -140,15 +141,39 @@ describe('evaluateWarningLetters', () => {
     assert.equal(standing.nextThreshold, 7);
   });
 
-  it('writes again after 30 days, and after a dismissed letter', async () => {
+  it('starts counting on 13 Nov, the launch day, and not before', async () => {
+    const win = warningWindow(NOW);
+    assert.equal(win.from.toISOString(), '2026-11-12T18:30:00.000Z', '13 Nov 00:00 IST');
+    assert.equal(win.to.toISOString(), '2026-11-30T18:29:59.999Z', '30 Nov 23:59:59 IST');
+    assert.equal(win.label, 'November 2026');
+    assert.equal(warningWindow(new Date('2026-11-12T10:00:00Z')), null, 'nothing before the launch day');
+    await fines(BDA, 7, { daysAgo: 10 });
+    assert.equal((await evaluateWarningLetters(new Date('2026-11-12T10:00:00Z'), deps({ mode: 'draft' }))).created.length, 0);
+    assert.equal((await evaluateWarningLetters(NOW, deps({ mode: 'draft' }))).created.length, 0, 'seven old misses do not count');
+  });
+
+  it('starts a fresh count each calendar month, 1 to 31 December', async () => {
+    const dec = warningWindow(new Date('2026-12-05T06:00:00Z'));
+    assert.equal(dec.from.toISOString(), '2026-11-30T18:30:00.000Z', '1 Dec 00:00 IST');
+    assert.equal(dec.to.toISOString(), '2026-12-31T18:29:59.999Z');
+    assert.equal(dec.label, 'December 2026');
+    await fines(BDA, 7);
+    await evaluateWarningLetters(NOW, deps({ mode: 'draft' }));
+    const decNow = new Date(NOW.getTime() + 15 * DAY);
+    assert.equal((await warningStandings(decNow)).find((s) => s.bdaEmail === BDA).missedCount, 0, 'November misses do not carry into December');
+    assert.equal((await evaluateWarningLetters(decNow, deps({ mode: 'draft' }))).created.length, 0);
+    await fines(BDA, 7, { daysAgo: -15 });
+    assert.equal((await evaluateWarningLetters(decNow, deps({ mode: 'draft' }))).created.length, 1, 'a new month, a new letter');
+    const letters = await BdaWarningLetterModel.find({ bdaEmail: BDA }).sort({ createdAt: 1 }).lean();
+    assert.match(letters[1].subject, /in December 2026$/);
+  });
+
+  it('writes again after a dismissed letter, and posts nothing to Discord', async () => {
     await fines(BDA, 7);
     await evaluateWarningLetters(NOW, deps({ mode: 'draft' }));
     const first = await BdaWarningLetterModel.findOne({ bdaEmail: BDA });
     await dismissLetter(first.letterId, ADMIN, 'counted wrongly');
     assert.equal((await evaluateWarningLetters(NOW, deps({ mode: 'draft' }))).created.length, 1, 'a dismissed letter does not block');
-    const later = new Date(NOW.getTime() + 31 * DAY);
-    await fines(BDA, 7, { daysAgo: -29 });
-    assert.equal((await evaluateWarningLetters(later, deps({ mode: 'draft' }))).created.length, 1, 'a new window, a new letter');
   });
 
   it('off writes nothing and live sends at once', async () => {

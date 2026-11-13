@@ -479,7 +479,7 @@ export default function Routes(app) {
   // Sales Lead Allocation: admins hand calls to BDAs, BDAs see their own, Discord reminder 5 min before.
   registerSalesAllocationRoutes(app);
 registerAbsenceRoutes(app);
-  // Warning letters at 7, 10 and 15 missed meetings in a rolling 30 days: drafted, sent, shown to admins.
+  // Warning letters at 7, 10 and 15 missed meetings in a calendar month (counting starts 13 Nov 2026): drafted, sent, shown to admins.
   registerWarningLetterRoutes(app);
   // Calendly Notetaker recaps sent by the Gmail Apps Script, and the CRM views of them.
   registerCalendlyRecapRoutes(app);
