@@ -76,7 +76,7 @@ const REGIONS = {
   },
 };
 
-const MAX_DISCOUNT = 100;
+const MAX_DISCOUNT_PERCENT = 20;
 
 export async function generatePaymentLink(req, res) {
   try {
@@ -98,8 +98,9 @@ export async function generatePaymentLink(req, res) {
       return res.status(400).json({ success: false, error: 'Discount cannot be negative.' });
     }
 
-    if (discountAmount > MAX_DISCOUNT) {
-      return res.status(400).json({ success: false, error: `Discount cannot exceed ${MAX_DISCOUNT}.` });
+    const maxDiscount = Math.floor(planConfig.originalPrice * MAX_DISCOUNT_PERCENT) / 100;
+    if (discountAmount > maxDiscount) {
+      return res.status(400).json({ success: false, error: `Discount cannot exceed ${MAX_DISCOUNT_PERCENT}% (${maxDiscount.toFixed(2)}).` });
     }
 
     const finalPrice = planConfig.originalPrice - discountAmount;
