@@ -4,6 +4,7 @@ import { normalizePhoneForMatching } from '../Utils/normalizePhoneForMatching.js
 import { triggerWorkflow } from './WorkflowController.js';
 import { getClientIp, detectCountryFromIp } from '../Utils/GeoIP.js';
 import { sendMetaLeadDiscordNotification } from './MetaLeadWebhookController.js';
+import { resolveLeadMarket, routeNoteLine } from '../Utils/leadMarket.js';
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const FORM_NAME = 'meta_ads_form_website';
@@ -155,6 +156,13 @@ function validateSubmission(body) {
       fbclid: optionalString(body.fbclid, 512),
       fbp: optionalString(body.fbp, 512),
       fbc: optionalString(body.fbc, 512),
+      // Which page the lead submitted from, and the Google Ads click ids from the landing URL
+      market: optionalString(body.market, 16),
+      landingRoute: optionalString(body.landingRoute, 120),
+      gclid: optionalString(body.gclid, 512),
+      gbraid: optionalString(body.gbraid, 512),
+      wbraid: optionalString(body.wbraid, 512),
+      gadCampaignId: optionalString(body.gadCampaignId, 64),
       clientGeo: extractClientGeo(body.clientGeo)
     }
   };
@@ -216,8 +224,11 @@ export const submitMetaAdsFormLead = async (req, res) => {
     const {
       name, email, phone, status, locale, pageUrl, referrer, visitorId,
       utmSource, utmMedium, utmCampaign, utmContent, utmTerm,
-      fbclid, fbp, fbc, clientGeo
+      fbclid, fbp, fbc, clientGeo, gclid, gbraid, wbraid, gadCampaignId
     } = fields;
+    const { leadMarket, landingRoute } = resolveLeadMarket({ market: fields.market, landingRoute: fields.landingRoute, pageUrl, locale });
+    // Google Ads traffic has no utm_source of its own; label it so the CRM source column is not blank.
+    const sourceFallback = gclid || gbraid || wbraid ? 'google' : 'meta_ads_form';
 
     // 4. Server-side geo (never blocks the submission)
     let geoLookup = { countryCode: null, country: null };
@@ -256,6 +267,12 @@ export const submitMetaAdsFormLead = async (req, res) => {
         fbclid,
         fbp,
         fbc,
+        market: leadMarket,
+        landingRoute,
+        gclid,
+        gbraid,
+        wbraid,
+        gadCampaignId,
         pageUrl,
         referrer,
         visitorId
@@ -277,6 +294,11 @@ export const submitMetaAdsFormLead = async (req, res) => {
     if (existingLead) {
       // 7. Merge path — enrich only; never downgrade status or re-trigger workflows
       const mergeSet = { clientName: name };
+      // Keep the first page a lead came from; fill it in only when the lead has none yet.
+      if (leadMarket && !existingLead.leadMarket) mergeSet.leadMarket = leadMarket;
+      if (landingRoute && !existingLead.landingRoute) mergeSet.landingRoute = landingRoute;
+      if (gclid && !existingLead.gclid) mergeSet.gclid = gclid;
+      if (gadCampaignId && !existingLead.gadCampaignId) mergeSet.gadCampaignId = gadCampaignId;
       if (phone) {
         mergeSet.clientPhone = phone;
         // findOneAndUpdate bypasses the pre-save hook, so set normalizedClientPhone explicitly
@@ -284,9 +306,12 @@ export const submitMetaAdsFormLead = async (req, res) => {
       }
       // Skip the note append when this exact line is already there (resubmission)
       const prev = existingLead.anythingToKnow || '';
-      if (!prev.includes(additionalNotes)) {
-        mergeSet.anythingToKnow = prev ? `${prev}\n\n${additionalNotes}` : additionalNotes;
-      }
+      // The route note is added once per route, so a resubmission from /uk after /uk adds nothing.
+      const routeNote = routeNoteLine(leadMarket, landingRoute);
+      const noteParts = [];
+      if (!prev.includes(additionalNotes)) noteParts.push(additionalNotes);
+      if (routeNote && !prev.includes(routeNote)) noteParts.push(routeNote);
+      if (noteParts.length) mergeSet.anythingToKnow = [prev, noteParts.join('\n')].filter(Boolean).join('\n\n');
 
       await CampaignBookingModel.findOneAndUpdate({ bookingId: existingLead.bookingId }, { $set: mergeSet });
       console.log(`Meta ads form lead merged: ${existingLead.bookingId} | ${normalizedEmail} | ${existingLead.bookingStatus}`);
@@ -302,11 +327,13 @@ export const submitMetaAdsFormLead = async (req, res) => {
         clientPhone: phone,
         formName: FORM_NAME,
         jobType: status,
-        utmSource: utmSource || 'meta_ads_form',
+        utmSource: utmSource || sourceFallback,
         utmMedium: utmMedium || 'paid',
         utmCampaign: utmCampaign || FORM_NAME,
         countryCode: serverGeo.countryCode,
         locale,
+        market: leadMarket,
+        landingRoute,
         outcome: 'merged',
         leadgenId: null,
         adId: null
@@ -320,7 +347,7 @@ export const submitMetaAdsFormLead = async (req, res) => {
       clientEmail: normalizedEmail,
       clientPhone: phone || null,
       normalizedClientPhone: normalizedPhone || null,
-      utmSource: utmSource || 'meta_ads_form',
+      utmSource: utmSource || sourceFallback,
       utmMedium: utmMedium || 'paid',
       utmCampaign: utmCampaign || FORM_NAME,
       utmContent: utmContent || null,
@@ -328,6 +355,10 @@ export const submitMetaAdsFormLead = async (req, res) => {
       bookingStatus: 'not-scheduled',
       leadSource: 'meta_lead_ad',
       metaFormName: FORM_NAME,
+      leadMarket,
+      landingRoute,
+      gclid: gclid || null,
+      gadCampaignId: gadCampaignId || null,
       metaRawData: {
         source: FORM_NAME,
         locale,
@@ -347,13 +378,19 @@ export const submitMetaAdsFormLead = async (req, res) => {
           utmTerm,
           fbclid,
           fbp,
-          fbc
+          fbc,
+          market: leadMarket,
+          landingRoute,
+          gclid,
+          gbraid,
+          wbraid,
+          gadCampaignId
         },
         clientGeo,
         serverGeo,
         submittedAt: new Date().toISOString()
       },
-      anythingToKnow: additionalNotes,
+      anythingToKnow: [additionalNotes, routeNoteLine(leadMarket, landingRoute)].filter(Boolean).join('\n'),
       visitorId: visitorId || null,
       userAgent,
       ipAddress: ip || null,
@@ -390,6 +427,8 @@ export const submitMetaAdsFormLead = async (req, res) => {
       utmCampaign: newBooking.utmCampaign,
       countryCode: serverGeo.countryCode,
       locale,
+      market: leadMarket,
+      landingRoute,
       outcome: 'created',
       leadgenId: null,
       adId: null

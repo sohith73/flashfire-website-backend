@@ -177,6 +177,7 @@ import { logReminderError } from '../Schema_Models/ReminderError.js';
 import { validatePostMeetingBookingStatus } from '../Utils/meetingStatusEligibility.js';
 import { checkBdaStatusAllowed, parseIgnoreReason, formatIgnoreReason } from '../Utils/bdaStatusRules.js';
 import { SYSTEM_ACTOR, statusChangeSet, statusHistoryPush } from '../Utils/statusHistoryOps.js';
+import { LEAD_MARKETS } from '../Utils/leadMarket.js';
 
 const PHONE_REGEX = /^\+?[1-9]\d{9,14}$/;
 
@@ -2324,7 +2325,8 @@ export const getLeadsPaginated = async (req, res) => {
       maxAmount,
       status,
       qualification,
-      temperature
+      temperature,
+      market
     } = req.query;
 
     let utmSource = req.query.utmSource;
@@ -2373,6 +2375,13 @@ export const getLeadsPaginated = async (req, res) => {
     }
     if (utmMedium && utmMedium !== 'all') {
       matchQuery.utmMedium = caseInsensitiveExact(utmMedium);
+    }
+    // Market filter: us, ca, uk, or 'none' for leads with no recorded page
+    const marketKey = String(market ?? '').trim().toLowerCase();
+    if (marketKey === 'none') {
+      matchQuery.leadMarket = null; // null also matches a missing field
+    } else if (LEAD_MARKETS.includes(marketKey)) {
+      matchQuery.leadMarket = marketKey;
     }
 
     if (normalizedPlanName && normalizedPlanName !== 'ALL') {
