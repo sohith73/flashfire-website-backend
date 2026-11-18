@@ -461,7 +461,9 @@ export async function sendMetaLeadDiscordNotification(leadInfo) {
       ...(leadInfo.utmMedium ? [{ name: 'Medium', value: leadInfo.utmMedium, inline: true }] : []),
       ...(leadInfo.utmCampaign ? [{ name: 'Campaign', value: leadInfo.utmCampaign, inline: true }] : []),
       ...(leadInfo.countryCode ? [{ name: 'Country', value: leadInfo.countryCode, inline: true }] : []),
-      ...(leadInfo.locale ? [{ name: 'Page', value: leadInfo.locale, inline: true }] : []),
+      ...(leadInfo.market || leadInfo.landingRoute
+        ? [{ name: 'Page', value: `${leadInfo.landingRoute || '/'}${leadInfo.market ? ` (${String(leadInfo.market).toUpperCase()})` : ''}`, inline: true }]
+        : (leadInfo.locale ? [{ name: 'Page', value: leadInfo.locale, inline: true }] : [])),
       ...(leadInfo.leadgenId ? [{ name: 'Lead ID', value: String(leadInfo.leadgenId), inline: true }] : []),
       ...(leadInfo.outcome ? [{
         name: 'Outcome',

@@ -1,4 +1,5 @@
 import { Logger } from '../Utils/Logger.js';
+import { marketFromUtmContent } from '../Utils/leadMarket.js';
 import { sendNoShowReminder } from '../Utils/WatiHelper.js';
 import { CampaignBookingModel } from '../Schema_Models/CampaignBooking.js';
 import { CampaignModel } from '../Schema_Models/Campaign.js';
@@ -502,6 +503,7 @@ async function handleCreatedEvent(req, res, payload) {
           utmCampaign: utmCampaign ?? existingBooking.utmCampaign,
           utmContent: utmContent ?? existingBooking.utmContent,
           utmTerm: utmTerm ?? existingBooking.utmTerm,
+          ...(!existingBooking.leadMarket && marketFromUtmContent(utmContent) ? { leadMarket: marketFromUtmContent(utmContent) } : {}),
           bookingStatus: 'scheduled',
           ...statusChangeSet(existingBooking.bookingStatus, 'scheduled', CALENDLY_ACTOR),
           ...(calendlyHost ? { calendlyHost } : {}),
@@ -805,6 +807,7 @@ async function handleCreatedEvent(req, res, payload) {
     utmCampaign,
     utmContent,
     utmTerm,
+    leadMarket: marketFromUtmContent(utmContent),
     clientName: inviteeName,
     clientEmail: inviteeEmail,
     clientPhone: inviteePhone,

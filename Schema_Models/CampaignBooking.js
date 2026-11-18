@@ -176,6 +176,26 @@ export const CampaignBookingSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  // Which register-site page the lead came from. leadMarket is 'us', 'ca' or 'uk'; landingRoute is the path, e.g. '/uk'.
+  leadMarket: {
+    type: String,
+    enum: ['us', 'ca', 'uk', null],
+    default: null,
+    index: true
+  },
+  landingRoute: {
+    type: String,
+    default: null
+  },
+  // Google Ads click identifiers from the landing URL
+  gclid: {
+    type: String,
+    default: null
+  },
+  gadCampaignId: {
+    type: String,
+    default: null
+  },
   metaPlatform: {
     type: String,
     default: null

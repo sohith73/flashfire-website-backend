@@ -75,6 +75,30 @@ export const MetaAdsFormSubmissionSchema = new mongoose.Schema({
         type: String,
         default: null
     },
+    market: {
+        type: String,
+        default: null
+    },
+    landingRoute: {
+        type: String,
+        default: null
+    },
+    gclid: {
+        type: String,
+        default: null
+    },
+    gbraid: {
+        type: String,
+        default: null
+    },
+    wbraid: {
+        type: String,
+        default: null
+    },
+    gadCampaignId: {
+        type: String,
+        default: null
+    },
     pageUrl: {
         type: String,
         default: null
