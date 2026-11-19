@@ -115,10 +115,13 @@ async function windowFines(bdaEmail, from, to, deps) {
 }
 
 /** Where a letter goes: the BDA, with every active CRM admin copied. */
+// Admins who are not copied on warning letters. Everyone else who is an active admin stays on Cc.
+export const WARNING_CC_EXCLUDE = Object.freeze(['arun@flashfirehq.com', 'punit@flashfirehq.com', 'sohith73@gmail.com']);
+
 export async function letterRecipients(bdaEmail, deps = {}) {
   const Users = deps.CrmUser ?? CrmUserModel;
   const admins = await Users.find({ isActive: { $ne: false }, $or: [{ role: 'admin' }, { isAdmin: true }] }).select('email').lean();
-  const cc = [...new Set(admins.map((a) => String(a.email || '').trim().toLowerCase()).filter((e) => e && e !== bdaEmail))];
+  const cc = [...new Set(admins.map((a) => String(a.email || '').trim().toLowerCase()).filter((e) => e && e !== bdaEmail && !WARNING_CC_EXCLUDE.includes(e)))];
   return { to: bdaEmail, cc };
 }
 

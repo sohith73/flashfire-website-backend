@@ -13,7 +13,7 @@ import { CrmUserModel } from '../Schema_Models/CrmUser.js';
 import { BdaDeductionModel } from '../Schema_Models/BdaDeduction.js';
 import { BdaWarningLetterModel } from '../Schema_Models/BdaWarningLetter.js';
 import { invalidateRegistryCache } from '../Utils/BdaRegistry.js';
-import { WARNING_LEVELS, composeLetter, dismissLetter, evaluateWarningLetters, levelForCount, nextThreshold, sendLetter, warningStandings, warningWindow } from '../Utils/WarningLetters.js';
+import { WARNING_LEVELS, composeLetter, letterRecipients, dismissLetter, evaluateWarningLetters, levelForCount, nextThreshold, sendLetter, warningStandings, warningWindow } from '../Utils/WarningLetters.js';
 import { registerWarningLetterRoutes } from '../Routes/warningLetterRoutes.js';
 
 const BDA = 'warn-bda@test.local';
@@ -272,5 +272,15 @@ describe('API', () => {
     assert.equal(d.body.letter.dismissNote, 'counted wrongly');
     assert.equal((await call('POST', `${BASE}/${l.letterId}/dismiss`)).status, 409);
     assert.equal((await call('POST', `${BASE}/nope/send`)).status, 404);
+  });
+});
+
+describe('letter recipients', () => {
+  it('copies active admins except Arun, Punit and sohith73, and never the BDA', async () => {
+    const emails = ['adit.jain@flashfirehq.com', 'Arun@flashfirehq.com', 'punit@flashfirehq.com', 'sohith73@gmail.com', BDA];
+    const CrmUser = { find: () => ({ select: () => ({ lean: async () => emails.map((email) => ({ email })) }) }) };
+    const { to, cc } = await letterRecipients(BDA, { CrmUser });
+    assert.equal(to, BDA);
+    assert.deepEqual(cc, ['adit.jain@flashfirehq.com']);
   });
 });
