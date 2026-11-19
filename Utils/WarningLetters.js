@@ -13,8 +13,8 @@ import { getTrackedBdas } from './BdaRegistry.js';
 // review do not count, so a waiver lowers the count the same way it lowers the fine.
 // Letters go by email only. Nothing is posted to Discord.
 //
-// WARNING_LETTERS_MODE: off writes nothing, draft (the default) writes a draft an admin reads and sends, live also
-// sends it the moment it is written.
+// Mode: live (the default) writes the letter and sends it the moment it is written. WARNING_LETTERS_MODE can override
+// it: draft writes a draft an admin reads and sends, off writes nothing.
 
 export const WARNING_START_DEFAULT = '2026-11-13';
 export const WARNING_LEVELS = Object.freeze([
@@ -50,8 +50,8 @@ export function warningWindow(now = new Date()) {
 }
 
 export function getWarningMode() {
-  const raw = String(process.env.WARNING_LETTERS_MODE ?? 'draft').trim().toLowerCase();
-  return ['off', 'draft', 'live'].includes(raw) ? raw : 'draft';
+  const raw = String(process.env.WARNING_LETTERS_MODE ?? 'live').trim().toLowerCase();
+  return ['off', 'draft', 'live'].includes(raw) ? raw : 'live';
 }
 
 /** The highest policy level a count reaches (0 when it reaches none). */
@@ -115,10 +115,13 @@ async function windowFines(bdaEmail, from, to, deps) {
 }
 
 /** Where a letter goes: the BDA, with every active CRM admin copied. */
+// Admins who are not copied on warning letters. Everyone else who is an active admin stays on Cc.
+export const WARNING_CC_EXCLUDE = Object.freeze(['arun@flashfirehq.com', 'punit@flashfirehq.com', 'sohith73@gmail.com']);
+
 export async function letterRecipients(bdaEmail, deps = {}) {
   const Users = deps.CrmUser ?? CrmUserModel;
   const admins = await Users.find({ isActive: { $ne: false }, $or: [{ role: 'admin' }, { isAdmin: true }] }).select('email').lean();
-  const cc = [...new Set(admins.map((a) => String(a.email || '').trim().toLowerCase()).filter((e) => e && e !== bdaEmail))];
+  const cc = [...new Set(admins.map((a) => String(a.email || '').trim().toLowerCase()).filter((e) => e && e !== bdaEmail && !WARNING_CC_EXCLUDE.includes(e)))];
   return { to: bdaEmail, cc };
 }
 
