@@ -13,8 +13,8 @@ import { getTrackedBdas } from './BdaRegistry.js';
 // review do not count, so a waiver lowers the count the same way it lowers the fine.
 // Letters go by email only. Nothing is posted to Discord.
 //
-// WARNING_LETTERS_MODE: off writes nothing, draft (the default) writes a draft an admin reads and sends, live also
-// sends it the moment it is written.
+// Mode: live (the default) writes the letter and sends it the moment it is written. WARNING_LETTERS_MODE can override
+// it: draft writes a draft an admin reads and sends, off writes nothing.
 
 export const WARNING_START_DEFAULT = '2026-11-13';
 export const WARNING_LEVELS = Object.freeze([
@@ -50,8 +50,8 @@ export function warningWindow(now = new Date()) {
 }
 
 export function getWarningMode() {
-  const raw = String(process.env.WARNING_LETTERS_MODE ?? 'draft').trim().toLowerCase();
-  return ['off', 'draft', 'live'].includes(raw) ? raw : 'draft';
+  const raw = String(process.env.WARNING_LETTERS_MODE ?? 'live').trim().toLowerCase();
+  return ['off', 'draft', 'live'].includes(raw) ? raw : 'live';
 }
 
 /** The highest policy level a count reaches (0 when it reaches none). */
