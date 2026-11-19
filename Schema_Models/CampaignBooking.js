@@ -176,10 +176,10 @@ export const CampaignBookingSchema = new mongoose.Schema({
     type: String,
     default: null
   },
-  // Which register-site page the lead came from. leadMarket is 'us', 'ca' or 'uk'; landingRoute is the path, e.g. '/uk'.
+  // Which register-site page the lead came from. leadMarket is 'us', 'ca', 'uk' or 'au'; landingRoute is the path, e.g. '/uk'.
   leadMarket: {
     type: String,
-    enum: ['us', 'ca', 'uk', null],
+    enum: ['us', 'ca', 'uk', 'au', null],
     default: null,
     index: true
   },

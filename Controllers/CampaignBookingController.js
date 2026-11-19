@@ -2376,7 +2376,7 @@ export const getLeadsPaginated = async (req, res) => {
     if (utmMedium && utmMedium !== 'all') {
       matchQuery.utmMedium = caseInsensitiveExact(utmMedium);
     }
-    // Market filter: us, ca, uk, or 'none' for leads with no recorded page
+    // Market filter: us, ca, uk, au, or 'none' for leads with no recorded page
     const marketKey = String(market ?? '').trim().toLowerCase();
     if (marketKey === 'none') {
       matchQuery.leadMarket = null; // null also matches a missing field

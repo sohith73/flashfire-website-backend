@@ -24,6 +24,9 @@ describe('leadMarket helper', () => {
     assert.equal(marketFromRoute('/uk'), 'uk');
     assert.equal(marketFromRoute('/en-gb/'), 'uk');
     assert.equal(marketFromRoute('/en-ca'), 'ca');
+    assert.equal(marketFromRoute('/au'), 'au');
+    assert.equal(marketFromRoute('/en-au/'), 'au');
+    assert.equal(marketFromRoute('/aura'), 'us', 'only /au and /au/... are the Australia page');
     assert.equal(marketFromRoute('/'), 'us');
     assert.equal(marketFromRoute('/register'), 'us');
     assert.equal(marketFromRoute('/ukulele'), 'us', 'only /uk and /uk/... are the UK page');
@@ -35,14 +38,19 @@ describe('leadMarket helper', () => {
     assert.deepEqual(resolveLeadMarket({ locale: 'en-ca' }), { leadMarket: 'ca', landingRoute: null });
     assert.deepEqual(resolveLeadMarket({ market: 'mars', locale: 'zz' }), { leadMarket: null, landingRoute: null });
     assert.equal(normalizeMarket('GB'), 'uk');
+    assert.equal(normalizeMarket('en-AU'), 'au');
+    assert.deepEqual(resolveLeadMarket({ market: 'au', landingRoute: '/au', locale: 'us' }), { leadMarket: 'au', landingRoute: '/au' });
+    assert.deepEqual(resolveLeadMarket({ pageUrl: 'https://x.com/', landingRoute: '/au', locale: 'us' }), { leadMarket: 'au', landingRoute: '/au' });
   });
 
   it('reads the hidden Calendly tag and writes the note line', () => {
     assert.equal(marketFromUtmContent('route-uk'), 'uk');
     assert.equal(marketFromUtmContent('Route-CA'), 'ca');
+    assert.equal(marketFromUtmContent('route-au'), 'au');
     assert.equal(marketFromUtmContent('video-ad-3'), null);
     assert.equal(marketFromUtmContent(null), null);
     assert.equal(routeNoteLine('uk', '/uk'), 'Form page: /uk (UK)');
+    assert.equal(routeNoteLine('au', '/au'), 'Form page: /au (Australia)');
     assert.equal(routeNoteLine(null, null), null);
   });
 });

@@ -1,14 +1,15 @@
 // Which market and landing route a lead came from. The register site serves one page per market
-// (/ for the US, /en-ca for Canada, /uk and /en-gb for the UK), and the CRM needs to tell them apart.
+// (/ for the US, /en-ca for Canada, /uk and /en-gb for the UK, /au and /en-au for Australia), and the CRM needs to tell them apart.
 //
-// leadMarket: 'us' | 'ca' | 'uk' (null when unknown). landingRoute: the path the visitor submitted from, e.g. '/uk'.
+// leadMarket: 'us' | 'ca' | 'uk' | 'au' (null when unknown). landingRoute: the path the visitor submitted from, e.g. '/uk'.
 
-export const LEAD_MARKETS = Object.freeze(['us', 'ca', 'uk']);
-export const MARKET_LABELS = Object.freeze({ us: 'US', ca: 'Canada', uk: 'UK' });
+export const LEAD_MARKETS = Object.freeze(['us', 'ca', 'uk', 'au']);
+export const MARKET_LABELS = Object.freeze({ us: 'US', ca: 'Canada', uk: 'UK', au: 'Australia' });
 
 const ROUTE_MARKET = [
   [/^\/(uk|en-gb)(\/|$)/i, 'uk'],
   [/^\/(en-ca|ca)(\/|$)/i, 'ca'],
+  [/^\/(au|en-au)(\/|$)/i, 'au'],
 ];
 
 /** A clean path such as '/uk' from a path or a full URL; null when it is not usable. Query and hash are dropped. */
@@ -32,12 +33,13 @@ export function marketFromRoute(route) {
   return 'us';
 }
 
-/** Normalises 'uk', 'en-gb', 'en-ca', 'ca', 'us' to a market; null for anything else. */
+/** Normalises 'uk', 'en-gb', 'en-ca', 'ca', 'au', 'en-au', 'us' to a market; null for anything else. */
 export function normalizeMarket(value) {
   const v = String(value ?? '').trim().toLowerCase();
   if (!v) return null;
   if (v === 'uk' || v === 'en-gb' || v === 'gb') return 'uk';
   if (v === 'ca' || v === 'en-ca') return 'ca';
+  if (v === 'au' || v === 'en-au') return 'au';
   if (v === 'us' || v === 'en-us') return 'us';
   return null;
 }
@@ -54,7 +56,7 @@ export function resolveLeadMarket({ market, landingRoute, pageUrl, locale } = {}
 
 /** The Calendly hidden tag: the form page puts utm_content = 'route-uk' when the ad link had none. */
 export function marketFromUtmContent(utmContent) {
-  const m = /^route-(us|ca|uk)$/i.exec(String(utmContent ?? '').trim());
+  const m = /^route-(us|ca|uk|au)$/i.exec(String(utmContent ?? '').trim());
   return m ? m[1].toLowerCase() : null;
 }
 
