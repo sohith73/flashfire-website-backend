@@ -1,6 +1,7 @@
 import Stripe from 'stripe';
 import crypto from 'crypto';
 import { ShortLinkModel } from '../Schema_Models/ShortLink.js';
+import { isCrmAdmin } from '../Utils/isCrmAdmin.js';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
@@ -98,7 +99,7 @@ export async function generatePaymentLink(req, res) {
       return res.status(400).json({ success: false, error: 'Discount cannot be negative.' });
     }
 
-    const isAdmin = req.crmUser?.isAdmin === true;
+    const isAdmin = await isCrmAdmin(req.crmUser);
     const maxDiscount = isAdmin ? planConfig.originalPrice - 0.01 : Math.floor(planConfig.originalPrice * MAX_DISCOUNT_PERCENT) / 100;
     if (discountAmount > maxDiscount) {
       return res.status(400).json({ success: false, error: isAdmin
