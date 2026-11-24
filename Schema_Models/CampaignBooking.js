@@ -277,6 +277,9 @@ export const CampaignBookingSchema = new mongoose.Schema({
     },
     default: null
   },
+  // Auto onboarding (dashboard user created when paid): stamped once the clients-tracking backend answered.
+  autoOnboardedAt: { type: Date, default: null },
+  autoOnboardResult: { type: String, default: '' },
   paymentPlan: {
     name: {
       type: String,

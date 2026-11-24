@@ -69,6 +69,9 @@ export const PaymentSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  // Auto onboarding (dashboard user created on payment): stamped once the clients-tracking backend answered.
+  autoOnboardedAt: { type: Date, default: null, index: true },
+  autoOnboardResult: { type: String, default: '' },
   // Payment status
   paymentStatus: {
     type: String,

@@ -23,6 +23,7 @@ import { normalizeTimezoneLabel } from './MeetingReminderUtils.js';
 import { scheduleDiscordMeetReminder } from './DiscordMeetReminderScheduler.js';
 import { DiscordConnect } from './DiscordConnect.js';
 import { startWhatsAppFailureAlertCron } from './WhatsAppFailureAlert.js';
+import { runAutoOnboardSweep } from './AutoOnboard.js';
 import { normalizePhoneForReminders, buildCallId } from './MeetingReminderUtils.js';
 
 sgMail.setApiKey(process.env.SENDGRID_API_KEY_1);
@@ -933,6 +934,18 @@ export function startCronScheduler() {
   // 10am IST daily: ensure all meetings in next 24h have reminders, cancel for canceled bookings
   cron.schedule('0 10 * * *', async () => {
     await runDailyReminderBackfill();
+  }, {
+    scheduled: true,
+    timezone: IST_TIMEZONE
+  });
+
+  // Every 5 minutes: paid CRM leads and completed payments become dashboard users (idempotent, retried on failure).
+  cron.schedule('*/5 * * * *', async () => {
+    try {
+      await runAutoOnboardSweep();
+    } catch (err) {
+      console.error('[auto-onboard] sweep failed:', err?.message || err);
+    }
   }, {
     scheduled: true,
     timezone: IST_TIMEZONE
