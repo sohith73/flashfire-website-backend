@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { planFromText, planFromAmount, inputFromBooking, inputFromPayment, triggerAutoOnboard, runAutoOnboardSweep, AUTO_ONBOARD_SINCE } from '../Utils/AutoOnboard.js';
+import { planFromText, planFromAmount, inputFromBooking, inputFromPayment, triggerAutoOnboard, runAutoOnboardSweep, kickAutoOnboard, onboardFromStripe, inputFromStripe, AUTO_ONBOARD_SINCE } from '../Utils/AutoOnboard.js';
 
 const quiet = { log() {}, warn() {} };
 
@@ -71,4 +71,65 @@ test('sweep stamps final outcomes, retries transient failures and alerts on reje
 
 test('the cutoff is in the past of go-live and rows older than it are not selected by the filters', () => {
   assert.equal(AUTO_ONBOARD_SINCE.toISOString(), '2026-11-24T18:30:00.000Z');
+});
+
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+test('a burst of kicks runs the sweep once, and a busy sweep is retried shortly', async () => {
+  let runs = 0;
+  const run = async () => (++runs === 1 ? { skipped: 'busy' } : { checked: 1 });
+  kickAutoOnboard({ run, delayMs: 5, retryMs: 5 });
+  kickAutoOnboard({ run, delayMs: 5, retryMs: 5 });
+  kickAutoOnboard({ run, delayMs: 5, retryMs: 5 });
+  await wait(60);
+  assert.equal(runs, 2); // one merged run, one retry after busy
+  const boom = async () => { throw new Error('db down'); };
+  kickAutoOnboard({ run: boom, delayMs: 1 });
+  await wait(20); // must not throw or leave the timer stuck
+  let after = 0;
+  kickAutoOnboard({ run: async () => { after++; return {}; }, delayMs: 1 });
+  await wait(20);
+  assert.equal(after, 1);
+});
+
+const NOW_OK = new Date(AUTO_ONBOARD_SINCE.getTime() + 3600_000);
+const stripeDeps = (over = {}) => {
+  const alerts = [];
+  const sent = [];
+  return { alerts, sent, deps: { trigger: async (i) => { sent.push(i); return { status: 'created' }; }, alert: async (m) => { alerts.push(m); }, sleep: async () => {}, delays: [0, 1, 1], logger: { log() {}, warn() {}, error() {} }, ...over } };
+};
+
+test('a Stripe payment is sent with the plan from the text, else from the USD price', async () => {
+  const a = stripeDeps();
+  assert.equal((await onboardFromStripe({ email: 'A@B.com', name: 'Ann Lee', planName: 'FlashFire Executive Plan', amount: 599, currency: 'USD', createdAt: NOW_OK }, a.deps)).status, 'created');
+  assert.deepEqual([a.sent[0].email, a.sent[0].planType, a.sent[0].source], ['a@b.com', 'EXECUTIVE', 'stripe']);
+  const b = stripeDeps();
+  await onboardFromStripe({ email: 'c@d.com', name: 'Cy', planName: 'FlashFire Plan', amount: 199, currency: 'USD', createdAt: NOW_OK }, b.deps);
+  assert.equal(b.sent[0].planType, 'IGNITE');
+  assert.equal(inputFromStripe({ email: 'x@y.com', name: 'X', planName: 'Custom', amount: 420, currency: 'AUD' }).planType, null);
+});
+
+test('Stripe: a transient failure is retried then succeeds, and a final failure alerts a human', async () => {
+  let n = 0;
+  const a = stripeDeps({ trigger: async () => (++n < 3 ? { transient: true, error: 'HTTP 502' } : { status: 'exists' }) });
+  assert.equal((await onboardFromStripe({ email: 'a@b.com', name: 'A', planName: 'Prime', amount: 99, currency: 'USD', createdAt: NOW_OK }, a.deps)).status, 'exists');
+  assert.equal(n, 3);
+  assert.equal(a.alerts.length, 0);
+  const b = stripeDeps({ trigger: async () => ({ transient: true, error: 'HTTP 503' }) });
+  const r = await onboardFromStripe({ email: 'a@b.com', name: 'A', planName: 'Prime', amount: 99, currency: 'USD', createdAt: NOW_OK }, b.deps);
+  assert.equal(r.status, 'failed');
+  assert.match(b.alerts[0], /Auto onboarding failed.*a@b\.com.*503/);
+});
+
+test('Stripe: unknown plan alerts and sends nothing, old events and missing emails are ignored, and it never throws', async () => {
+  const a = stripeDeps();
+  assert.equal((await onboardFromStripe({ email: 'a@b.com', name: 'A', planName: 'Custom', amount: 420, currency: 'AUD', createdAt: NOW_OK }, a.deps)).status, 'bad_plan');
+  assert.equal(a.sent.length, 0);
+  assert.match(a.alerts[0], /plan=unknown/);
+  const b = stripeDeps();
+  assert.equal((await onboardFromStripe({ email: 'a@b.com', name: 'A', planName: 'Prime', amount: 99, currency: 'USD', createdAt: new Date(AUTO_ONBOARD_SINCE.getTime() - 1) }, b.deps)).status, 'skipped_old');
+  assert.equal((await onboardFromStripe({ email: '', name: 'A', planName: 'Prime', createdAt: NOW_OK }, b.deps)).status, 'invalid');
+  assert.equal(b.sent.length, 0);
+  const c = stripeDeps({ trigger: async () => { throw new Error('boom'); } });
+  assert.equal((await onboardFromStripe({ email: 'a@b.com', name: 'A', planName: 'Prime', amount: 99, currency: 'USD', createdAt: NOW_OK }, c.deps)).status, 'failed');
 });

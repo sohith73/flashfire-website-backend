@@ -5,8 +5,9 @@
  * Both are sent to the clients-tracking backend (POST /api/internal/auto-onboard), which creates the
  * dashboard user, assigns CSM and dashboard manager by round robin, and skips clients that already exist.
  *
- * Polling instead of hooking each payment path: BDA, admin, microservice, PayPal and Stripe all end
- * as a row in one of two collections, so one sweep covers every path and a missed call is retried.
+ * Real time: the places that mark a lead paid or store a payment call kickAutoOnboard(), which runs the
+ * sweep within about a second. Stripe leaves no row of its own, so its webhook calls onboardFromStripe()
+ * directly. The 5 minute cron sweep stays as the fallback for anything a kick missed.
  * Only rows newer than AUTO_ONBOARD_SINCE are looked at, so old clients are never re-created.
  */
 import axios from 'axios';
@@ -135,5 +136,93 @@ export async function runAutoOnboardSweep(deps = {}) {
     return stats;
   } finally {
     running = false;
+  }
+}
+
+const KICK_DELAY_MS = 1500;
+const KICK_RETRY_MS = 3000;
+const KICK_MAX_RETRIES = 10;
+let kickTimer = null;
+
+/**
+ * Run the sweep right away (after a short delay that merges a burst into one run). Never throws.
+ * If a sweep is already running, try again shortly so a payment that lands mid-run is not left for the cron.
+ * @param {{delayMs?: number, retryMs?: number, run?: Function}} [opts]
+ */
+export function kickAutoOnboard(opts = {}) {
+  if (kickTimer) return;
+  const run = opts.run || runAutoOnboardSweep;
+  const retryMs = opts.retryMs ?? KICK_RETRY_MS;
+  let tries = 0;
+  const fire = async () => {
+    kickTimer = null;
+    try {
+      const out = await run();
+      if (out?.skipped === 'busy' && tries++ < KICK_MAX_RETRIES) {
+        kickTimer = setTimeout(fire, retryMs);
+        kickTimer.unref?.();
+      }
+    } catch (e) {
+      console.error('[auto-onboard] kick failed:', String(e?.message || e).slice(0, 200));
+    }
+  };
+  kickTimer = setTimeout(fire, opts.delayMs ?? KICK_DELAY_MS);
+  kickTimer.unref?.();
+}
+
+/** @returns {{email: string, name: string, planType: string|null, amountPaid: number, currency: string, source: string}} */
+export function inputFromStripe(f) {
+  return {
+    email: String(f.email || '').trim().toLowerCase(),
+    name: String(f.name || '').trim(),
+    planType: planFromText(f.planName) || planFromText(f.planSubtitle) || planFromAmount(f.amount, f.currency),
+    amountPaid: f.amount ?? 0,
+    currency: f.currency || 'USD',
+    source: 'stripe',
+  };
+}
+
+const STRIPE_RETRY_DELAYS_MS = [0, 20_000, 60_000, 180_000];
+
+/**
+ * Stripe payment straight from the webhook (no payments row exists for the poller to find).
+ * Retries a transient failure a few times (a sleeping clients-tracking instance wakes up), and alerts a
+ * human if it still fails or the plan cannot be determined. Never throws.
+ * @param {{email: string, name: string, planName?: string, planSubtitle?: string, amount?: number, currency?: string, createdAt?: Date}} fields
+ * @param {{trigger?: Function, alert?: Function, sleep?: Function, delays?: number[], logger?: Console}} [deps]
+ */
+export async function onboardFromStripe(fields, deps = {}) {
+  const trigger = deps.trigger || triggerAutoOnboard;
+  const logger = deps.logger || console;
+  const alert = deps.alert || ((msg) => DiscordConnect(process.env.DISCORD_MAIN_WEBHOOK_URL, msg, false).catch(() => {}));
+  const sleep = deps.sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
+  const delays = deps.delays || STRIPE_RETRY_DELAYS_MS;
+  try {
+    if ((fields.createdAt || new Date()) < AUTO_ONBOARD_SINCE) return { status: 'skipped_old' };
+    const input = inputFromStripe(fields);
+    if (!input.email) return { status: 'invalid', error: 'no email on the payment' };
+    if (!input.name || !input.planType) {
+      await alert(`⚠️ **Auto onboarding skipped** (stripe): ${input.email} plan=${input.planType || 'unknown'} reason=${!input.planType ? 'bad_plan' : 'missing name'}. Create this client by hand.`);
+      return { status: !input.planType ? 'bad_plan' : 'invalid' };
+    }
+    let out = { transient: true, error: 'not tried' };
+    for (const wait of delays) {
+      if (wait) await sleep(wait);
+      out = await trigger(input);
+      if (!out.transient) break;
+      logger.warn(`[auto-onboard] stripe ${input.email}: retrying (${out.error})`);
+    }
+    if (out.transient) {
+      await alert(`⚠️ **Auto onboarding failed** (stripe): ${input.email} paid but clients-tracking did not answer (${out.error}). Create this client by hand.`);
+      return { status: 'failed', error: out.error };
+    }
+    if (!['created', 'exists'].includes(out.status)) {
+      await alert(`⚠️ **Auto onboarding skipped** (stripe): ${input.email} plan=${input.planType} reason=${out.status} ${out.error || ''}. Create this client by hand.`);
+    }
+    logger.log(`[auto-onboard] stripe ${input.email}: ${out.status}`);
+    return out;
+  } catch (e) {
+    logger.error('[auto-onboard] stripe handler error:', String(e?.message || e).slice(0, 200));
+    return { status: 'failed', error: 'handler error' };
   }
 }

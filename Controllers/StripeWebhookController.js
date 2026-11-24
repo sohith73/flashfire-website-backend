@@ -2,6 +2,7 @@ import Stripe from "stripe";
 import { PaymentModel } from "../Schema_Models/Payment.js";
 import { sendPaymentConfirmationEmail } from "../Utils/PaymentEmailHelper.js";
 import { DiscordConnect } from "../Utils/DiscordConnect.js";
+import { onboardFromStripe } from "../Utils/AutoOnboard.js";
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || "";
 const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET || "";
@@ -284,6 +285,9 @@ async function handleCheckoutSessionCompleted(event) {
     },
     event
   );
+
+  // A paid checkout becomes a dashboard client and a Discord channel (idempotent by email). Not awaited: the webhook answers at once.
+  void onboardFromStripe({ email: customerEmail, name: customerName, planName, planSubtitle, amount, currency, createdAt: new Date((event.created || Date.now() / 1000) * 1000) });
 }
 
 async function handleCheckoutAsyncPaymentSucceeded(event) {
@@ -313,6 +317,8 @@ async function handleCheckoutAsyncPaymentSucceeded(event) {
     },
     event
   );
+
+  void onboardFromStripe({ email: customerEmail, name: customerName, planName: session.metadata?.planName, planSubtitle: session.metadata?.planSubtitle, amount, currency, createdAt: new Date((event.created || Date.now() / 1000) * 1000) });
 }
 
 async function handleInvoicePaid(event) {
