@@ -333,13 +333,16 @@ const builders = {
     }
 
     const { meetingDateFormatted, meetingTimeWithTimezone } = buildMeetingTimeParams(booking);
-    const rescheduleLink = await resolveRescheduleLink(booking);
 
+    // This template goes out after a missed or canceled meeting. The booking's own
+    // Calendly reschedule link points at an event that is already in the past, so
+    // Calendly refuses it ("this event is in the past"). Always send the open
+    // scheduling page instead.
     return [
       booking.clientName || 'Valued Client',
       meetingDateFormatted,
       meetingTimeWithTimezone,
-      rescheduleLink
+      DEFAULT_SCHEDULING_LINK
     ];
   },
 

@@ -54,6 +54,22 @@ describe('appointment reminder meeting time (forced-Eastern policy)', () => {
   });
 });
 
+describe('cancelled1 (missed or canceled meeting)', () => {
+  it('sends the open scheduling page, not the past booking reschedule link', async () => {
+    const p = await buildTemplateParameters('cancelled1', { booking: booking('America/New_York') });
+    assert.equal(p.length, 4);
+    assert.equal(p[0], 'Test Client');
+    assert.equal(p[3], 'https://calendly.com/feedback-flashfire/15min');
+  });
+
+  it('still sends it when the booking has no reschedule link at all', async () => {
+    const p = await buildTemplateParameters('cancelled1', {
+      booking: { ...booking('America/New_York'), calendlyRescheduleLink: undefined },
+    });
+    assert.equal(p[3], 'https://calendly.com/feedback-flashfire/15min');
+  });
+});
+
 describe('reschedule button tail', () => {
   it('sends only the path after calendly.com', () => {
     assert.equal(calendlyButtonTail('https://calendly.com/reschedulings/8e172654'), 'reschedulings/8e172654');
