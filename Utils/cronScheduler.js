@@ -24,6 +24,7 @@ import { scheduleDiscordMeetReminder } from './DiscordMeetReminderScheduler.js';
 import { DiscordConnect } from './DiscordConnect.js';
 import { startWhatsAppFailureAlertCron } from './WhatsAppFailureAlert.js';
 import { runAutoOnboardSweep } from './AutoOnboard.js';
+import { didCompanySendAfter, getBridgeStatus } from './WhatsAppBridge.js';
 import { normalizePhoneForReminders, buildCallId } from './MeetingReminderUtils.js';
 
 sgMail.setApiKey(process.env.SENDGRID_API_KEY_1);
@@ -923,6 +924,201 @@ async function runDailyReminderBackfill() {
 }
 
 
+const LEAD_ACTION_WEBHOOK = process.env.DISCORD_LEAD_ACTION_WEBHOOK_URL;
+
+function formatIST(date) {
+  return DateTime.fromJSDate(new Date(date)).setZone(IST_TIMEZONE).toFormat('dd MMM, h:mm a');
+}
+
+function formatElapsed(minutes) {
+  if (minutes < 60) return `${minutes}m`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
+function minutesSince(date) {
+  return Math.floor((Date.now() - new Date(date).getTime()) / 60000);
+}
+
+/**
+ * Alert 1 — Greeting not sent within 1 hour of meeting completion.
+ * Checks meetings completed 60–1440 min ago without a greeting alert already fired.
+ */
+async function checkGreetingAlerts() {
+  if (!LEAD_ACTION_WEBHOOK) return;
+
+  // Check bridge auth state first — alert if logged out
+  const bridgeStatus = await getBridgeStatus();
+  if (!bridgeStatus.ok || bridgeStatus.auth_state === 'logged_out') {
+    await DiscordConnect(
+      LEAD_ACTION_WEBHOOK,
+      `⚠️ **WhatsApp Bridge Logged Out**\nThe company WhatsApp session has expired and needs re-pairing.\n**Action:** Go to Render dashboard → whatsapp-bridge service → open Logs → scan the QR code shown on your phone.\nhttps://dashboard.render.com`,
+      false
+    ).catch(() => {});
+    return;
+  }
+
+  const now = new Date();
+  const oneHourAgo = new Date(now - 60 * 60 * 1000);
+  const oneDayAgo = new Date(now - 24 * 60 * 60 * 1000);
+
+  let bookings;
+  try {
+    bookings = await CampaignBookingModel.find({
+      bookingStatus: 'completed',
+      statusChangedAt: { $gte: oneDayAgo, $lte: oneHourAgo },
+      bdaGreetingAlertSentAt: null,
+      phone: { $nin: [null, ''] },
+    }).select('name phone claimedBy statusChangedAt').lean();
+  } catch (err) {
+    console.error('[GreetingAlert] DB query failed:', err.message);
+    return;
+  }
+
+  for (const booking of bookings) {
+    try {
+      const { sent, error } = await didCompanySendAfter(booking.phone, booking.statusChangedAt);
+
+      if (error) {
+        console.warn(`[GreetingAlert] Bridge error for booking ${booking._id}: ${error}`);
+        continue;
+      }
+
+      if (sent) {
+        // Greeting was sent — mark with epoch so we never re-check this booking
+        await CampaignBookingModel.updateOne(
+          { _id: booking._id, bdaGreetingAlertSentAt: null },
+          { $set: { bdaGreetingAlertSentAt: new Date(0) } }
+        );
+        continue;
+      }
+
+      // Not sent — atomically claim to avoid duplicate alerts across restarts
+      const claimed = await CampaignBookingModel.findOneAndUpdate(
+        { _id: booking._id, bdaGreetingAlertSentAt: null },
+        { $set: { bdaGreetingAlertSentAt: now } },
+        { new: false }
+      );
+      if (!claimed) continue;
+
+      const elapsed = formatElapsed(minutesSince(booking.statusChangedAt));
+      const bdaName = booking.claimedBy?.name || 'Unknown BDA';
+      const digits = String(booking.phone).replace(/\D/g, '').replace(/^91/, '');
+      const formattedPhone = `+91 ${digits.slice(0, 5)} ${digits.slice(5)}`;
+
+      const msg = [
+        `🚨 **Greeting Not Sent — 1 Hour Passed**`,
+        ``,
+        `**BDA:** ${bdaName}`,
+        `**Client:** ${booking.name || 'Unknown'}`,
+        `**Phone:** ${formattedPhone}`,
+        `**Meeting completed at:** ${formatIST(booking.statusChangedAt)}`,
+        `**Time elapsed:** ${elapsed}`,
+      ].join('\n');
+
+      await DiscordConnect(LEAD_ACTION_WEBHOOK, msg, false).catch(() => {});
+      console.log(`[GreetingAlert] Alert sent for booking ${booking._id} (${bdaName})`);
+    } catch (err) {
+      console.error(`[GreetingAlert] Error processing booking ${booking._id}:`, err.message);
+    }
+  }
+}
+
+/**
+ * Alert 2 — Follow-up WhatsApp not sent between meeting completed date and scheduled follow-up date.
+ * Checks: did BDA send any WhatsApp between statusChangedAt (meeting completed) and scheduledFor (follow-up due)?
+ * Fires when scheduledFor has passed and no message was sent in that window.
+ */
+async function checkFollowUpAlerts() {
+  if (!LEAD_ACTION_WEBHOOK) return;
+
+  const now = new Date();
+  const oneDayAgo = new Date(now - 24 * 60 * 60 * 1000);
+
+  let bookings;
+  try {
+    bookings = await CampaignBookingModel.find({
+      bookingStatus: { $nin: ['paid', 'cancelled', 'ignored'] },
+      bookingStatus: 'completed',
+      bdaFollowUpAlertSentAt: null,
+      phone: { $nin: [null, ''] },
+      statusChangedAt: { $ne: null },
+      scheduledWorkflows: {
+        $elemMatch: {
+          'step.channel': 'whatsapp',
+          status: 'scheduled',
+          scheduledFor: { $gte: oneDayAgo, $lte: now },
+        },
+      },
+    }).select('name phone claimedBy statusChangedAt scheduledWorkflows').lean();
+  } catch (err) {
+    console.error('[FollowUpAlert] DB query failed:', err.message);
+    return;
+  }
+
+  for (const booking of bookings) {
+    // Find the overdue whatsapp workflow step
+    const overdueWorkflow = booking.scheduledWorkflows?.find(
+      w => w.step?.channel === 'whatsapp' &&
+           w.status === 'scheduled' &&
+           new Date(w.scheduledFor) <= now &&
+           new Date(w.scheduledFor) >= oneDayAgo
+    );
+    if (!overdueWorkflow) continue;
+
+    // Check if BDA sent any WhatsApp between meeting completed and follow-up due date
+    const meetingCompletedAt = booking.statusChangedAt;
+    const followUpDueAt = overdueWorkflow.scheduledFor;
+
+    try {
+      const { sent, error } = await didCompanySendAfter(booking.phone, meetingCompletedAt);
+
+      if (error) {
+        console.warn(`[FollowUpAlert] Bridge error for booking ${booking._id}: ${error}`);
+        continue;
+      }
+
+      if (sent) {
+        // BDA sent a message in the window — mark as resolved, no alert
+        await CampaignBookingModel.updateOne(
+          { _id: booking._id, bdaFollowUpAlertSentAt: null },
+          { $set: { bdaFollowUpAlertSentAt: new Date(0) } }
+        );
+        continue;
+      }
+
+      const claimed = await CampaignBookingModel.findOneAndUpdate(
+        { _id: booking._id, bdaFollowUpAlertSentAt: null },
+        { $set: { bdaFollowUpAlertSentAt: now } },
+        { new: false }
+      );
+      if (!claimed) continue;
+
+      const elapsed = formatElapsed(minutesSince(followUpDueAt));
+      const bdaName = booking.claimedBy?.name || 'Unknown BDA';
+      const digits = String(booking.phone).replace(/\D/g, '').replace(/^91/, '');
+      const formattedPhone = `+91 ${digits.slice(0, 5)} ${digits.slice(5)}`;
+
+      const msg = [
+        `⏰ **Follow-up Not Done**`,
+        ``,
+        `**BDA:** ${bdaName}`,
+        `**Client:** ${booking.name || 'Unknown'}`,
+        `**Phone:** ${formattedPhone}`,
+        `**Meeting completed at:** ${formatIST(meetingCompletedAt)}`,
+        `**Follow-up was due:** ${formatIST(followUpDueAt)}`,
+        `**Overdue by:** ${elapsed}`,
+      ].join('\n');
+
+      await DiscordConnect(LEAD_ACTION_WEBHOOK, msg, false).catch(() => {});
+      console.log(`[FollowUpAlert] Alert sent for booking ${booking._id} (${bdaName})`);
+    } catch (err) {
+      console.error(`[FollowUpAlert] Error processing booking ${booking._id}:`, err.message);
+    }
+  }
+}
+
 export function startCronScheduler() {
   cron.schedule('*/15 * * * *', async () => {
     await processScheduledItems();
@@ -953,6 +1149,24 @@ export function startCronScheduler() {
 
   // 9am + 9pm IST: post WhatsApp (WATI) send failures from the last 12h to Discord
   startWhatsAppFailureAlertCron();
+
+  // Every 15 min: greeting alert — BDA must send WhatsApp within 1hr of meeting completion
+  cron.schedule('*/15 * * * *', async () => {
+    try {
+      await checkGreetingAlerts();
+    } catch (err) {
+      console.error('[GreetingAlert] Unhandled error:', err.message);
+    }
+  }, { scheduled: true, timezone: IST_TIMEZONE });
+
+  // Every 15 min: follow-up alert — BDA must send WhatsApp by the scheduled follow-up date
+  cron.schedule('*/15 * * * *', async () => {
+    try {
+      await checkFollowUpAlerts();
+    } catch (err) {
+      console.error('[FollowUpAlert] Unhandled error:', err.message);
+    }
+  }, { scheduled: true, timezone: IST_TIMEZONE });
 
   // NOTE: the 4am IST call summary lives in index.js (sendCallLeadsDailySummary).
   // The shift-window duplicate that used to be scheduled here was removed — it ran at the
