@@ -432,6 +432,11 @@ export const CampaignBookingSchema = new mongoose.Schema({
       default: null
     }
   },
+  // The follow-up date a BDA picked in the CRM's follow-up pop-up (not the default next-day call the system makes).
+  followUp: {
+    at: { type: Date, default: null },
+    setAt: { type: Date, default: null }
+  },
   // --- Call Leads tab --------------------------------------------------------
   // A Meta lead that never booked has no owner anywhere else: claimLead() rejects
   // the 'not-scheduled' status outright, and Calendly never runs so calendlyHost

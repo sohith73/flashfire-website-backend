@@ -59,6 +59,11 @@ describe('buildSalesSheetLeads', () => {
     assert.equal(s.leads[0].status, 'Warm');
     assert.equal(out.skippedOtherExecutives, 1);
   });
+  it('prefers the date the BDA picked on the lead over the scheduled call', async () => {
+    const picked = { ...booking({ id: 'g', name: 'G', phone: '+31600000000', by: 'siddhartha@flashfirehq.com' }), followUp: { at: new Date('2026-12-02T10:00:00Z') } };
+    const out = await buildSalesSheetLeads('2026-11', { ...deps, Bookings: { find: () => chain([picked]) } });
+    assert.equal(out.executives.find((x) => x.key === 'siddhartha').leads[0].followUpDate, '02-Dec-2026');
+  });
   it('returns null for a bad month', async () => assert.equal(await buildSalesSheetLeads('2026-1', deps), null));
 });
 
