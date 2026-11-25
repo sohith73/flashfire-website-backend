@@ -89,8 +89,12 @@ export function registerSalesSheetRoutes(app, deps = {}) {
         const followUpAt = booking.followUp?.at ? new Date(booking.followUp.at) : null;
 
         if (!followUpAt) {
-          // No follow-up date set yet — just show Upcoming
-          followUpStatus = 'Upcoming';
+          // No follow-up date set — if meeting was completed more than 1 day ago, BDA should have set one by now
+          const meetingDayIST = new Date(statusChangedAt);
+          const meetingMidnightIST = new Date(meetingDayIST.getTime() + 5.5 * 3600 * 1000);
+          meetingMidnightIST.setUTCHours(0, 0, 0, 0);
+          const dayAfterMeetingIST = new Date(meetingMidnightIST.getTime() + 24 * 3600 * 1000);
+          followUpStatus = todayIST >= dayAfterMeetingIST ? 'Set Follow-up Date' : 'Upcoming';
         } else if (followUpAt >= tomorrowIST) {
           // Follow-up date is in the future
           followUpStatus = 'Upcoming';
