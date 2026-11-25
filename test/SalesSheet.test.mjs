@@ -5,6 +5,7 @@ import express from 'express';
 import { monthBounds, countryFor, sheetDate, sheetDateTime, buildSalesSheetLeads } from '../Utils/SalesSheetLeads.js';
 import { makeKeyCheck } from '../Utils/IntegrationKeyAuth.js';
 import { registerSalesSheetRoutes } from '../Routes/salesSheetRoutes.js';
+import { normalizePlan, updateFollowUpPlan } from '../Controllers/ScheduleFollowUpController.js';
 
 const chain = (rows) => ({ sort: () => chain(rows), select: () => chain(rows), lean: async () => rows, then: undefined });
 const booking = (o) => ({
@@ -71,6 +72,12 @@ describe('buildSalesSheetLeads', () => {
     const out = await buildSalesSheetLeads('2026-11', { ...deps, Bookings: { find: () => chain([picked]) } });
     assert.equal(out.executives.find((x) => x.key === 'siddhartha').leads[0].followUpDate, '02-Dec-2026');
   });
+  it('uses the package the BDA leaned towards when no plan was bought, and the bought plan when there is one', async () => {
+    const a = { ...booking({ id: 'h', name: 'H', phone: '+447000000011', by: 'kalpataru@flashfirehq.com' }), followUp: { plan: 'EXECUTIVE' } };
+    const b = { ...booking({ id: 'i', name: 'I', phone: '+447000000012', by: 'kalpataru@flashfirehq.com', plan: { name: 'IGNITE', price: 199 } }), followUp: { plan: 'EXECUTIVE' } };
+    const out = await buildSalesSheetLeads('2026-11', { ...deps, Bookings: { find: () => chain([a, b]) } });
+    assert.deepEqual(out.executives.find((x) => x.key === 'kalpataru').leads.map((l) => l.package), ['Executive', 'Ignite']);
+  });
   it('returns null for a bad month', async () => assert.equal(await buildSalesSheetLeads('2026-1', deps), null));
 });
 
@@ -106,5 +113,21 @@ describe('route', () => {
     const res = await get('/api/sales-sheet/leads?month=2026-11', 'good');
     assert.equal(res.status, 200);
     assert.equal((await res.json()).success, true);
+  });
+});
+
+describe('follow-up package', () => {
+  it('accepts the four plans in any case and nothing else', () => {
+    assert.equal(normalizePlan('ignite'), 'IGNITE');
+    assert.equal(normalizePlan(' Prime '), 'PRIME');
+    assert.equal(normalizePlan('gold'), null);
+    assert.equal(normalizePlan(''), null);
+    assert.equal(normalizePlan(undefined), null);
+  });
+  it('answers 400 for an unknown plan before touching the database', async () => {
+    const res = { code: 0, body: null, status(c) { this.code = c; return this; }, json(b) { this.body = b; return this; } };
+    await updateFollowUpPlan({ params: { bookingId: 'x' }, body: { plan: 'gold' } }, res);
+    assert.equal(res.code, 400);
+    assert.equal(res.body.success, false);
   });
 });
