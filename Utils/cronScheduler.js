@@ -1004,8 +1004,7 @@ async function checkGreetingAlerts() {
 
       const elapsed = formatElapsed(minutesSince(booking.statusChangedAt));
       const bdaName = booking.claimedBy?.name || 'Unknown BDA';
-      const digits = String(booking.phone).replace(/\D/g, '').replace(/^91/, '');
-      const formattedPhone = `+91 ${digits.slice(0, 5)} ${digits.slice(5)}`;
+      const formattedPhone = `+${String(booking.phone).replace(/\D/g, '')}`;
 
       const msg = [
         `🚨 **Greeting Not Sent — 1 Hour Passed**`,
@@ -1039,7 +1038,6 @@ async function checkFollowUpAlerts() {
   let bookings;
   try {
     bookings = await CampaignBookingModel.find({
-      bookingStatus: { $nin: ['paid', 'cancelled', 'ignored'] },
       bookingStatus: 'completed',
       bdaFollowUpAlertSentAt: null,
       phone: { $nin: [null, ''] },
@@ -1097,8 +1095,7 @@ async function checkFollowUpAlerts() {
 
       const elapsed = formatElapsed(minutesSince(followUpDueAt));
       const bdaName = booking.claimedBy?.name || 'Unknown BDA';
-      const digits = String(booking.phone).replace(/\D/g, '').replace(/^91/, '');
-      const formattedPhone = `+91 ${digits.slice(0, 5)} ${digits.slice(5)}`;
+      const formattedPhone = `+${String(booking.phone).replace(/\D/g, '')}`;
 
       const msg = [
         `⏰ **Follow-up Not Done**`,
