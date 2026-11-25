@@ -178,6 +178,7 @@ import { validatePostMeetingBookingStatus } from '../Utils/meetingStatusEligibil
 import { checkBdaStatusAllowed, parseIgnoreReason, formatIgnoreReason } from '../Utils/bdaStatusRules.js';
 import { SYSTEM_ACTOR, statusChangeSet, statusHistoryPush } from '../Utils/statusHistoryOps.js';
 import { LEAD_MARKETS } from '../Utils/leadMarket.js';
+import { kickAutoOnboard } from '../Utils/AutoOnboard.js';
 
 const PHONE_REGEX = /^\+?[1-9]\d{9,14}$/;
 
@@ -1375,6 +1376,9 @@ export const updateBookingStatus = async (req, res) => {
       updateOps,
       { new: true }
     );
+
+    // A lead marked paid (BDA or admin): tell the dashboard team on Discord right away. Creates no dashboard.
+    if (status === 'paid') kickAutoOnboard();
 
     // If status changed to "paid", cancel all scheduled reminders for this client
     if (status === 'paid') {
@@ -2992,6 +2996,8 @@ export const handlePaidClientFromMicroservice = async (req, res) => {
         }
       }
     );
+
+    if (updateResult.modifiedCount > 0) kickAutoOnboard();
 
     // Log the update
     console.log(`✅ Marked ${updateResult.modifiedCount} lead(s) as paid`, {
