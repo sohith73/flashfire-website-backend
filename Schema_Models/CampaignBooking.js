@@ -672,6 +672,16 @@ export const CampaignBookingSchema = new mongoose.Schema({
   bdaCallPlacedBy: {
     type: String,
     default: null
+  },
+  // Lead action alert tracking — set when alert fires, epoch (new Date(0)) when checked but no alert needed
+  bdaGreetingAlertSentAt: {
+    type: Date,
+    default: null,
+    index: true
+  },
+  bdaFollowUpAlertSentAt: {
+    type: Date,
+    default: null
   }
 }, {
   timestamps: true
