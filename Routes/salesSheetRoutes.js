@@ -85,33 +85,25 @@ export function registerSalesSheetRoutes(app, deps = {}) {
           followUpStatus = 'Overdue';
         }
       } else {
-        // Meeting completed — check if BDA sent WhatsApp after meeting
-        const { sent, error } = await (deps.didCompanySendAfter ?? didCompanySendAfter)(phone_, statusChangedAt);
+        // Meeting completed — determine follow-up deadline from followUp.at
+        const followUpAt = booking.followUp?.at ? new Date(booking.followUp.at) : null;
 
-        if (!error && sent) {
-          followUpStatus = 'Done';
+        if (!followUpAt) {
+          // No follow-up date set yet — just show Upcoming
+          followUpStatus = 'Upcoming';
+        } else if (followUpAt >= tomorrowIST) {
+          // Follow-up date is in the future
+          followUpStatus = 'Upcoming';
+        } else if (followUpAt >= todayIST) {
+          // Follow-up date is today
+          followUpStatus = 'Due Today';
         } else {
-          // BDA hasn't sent — determine deadline from followUp.at and scheduledWorkflows
-          const followUpAt = booking.followUp?.at ? new Date(booking.followUp.at) : null;
-          const nextWorkflow = booking.scheduledWorkflows
-            ?.filter(w => w.step?.channel === 'whatsapp' && w.status === 'scheduled')
-            ?.sort((a, b) => new Date(a.scheduledFor) - new Date(b.scheduledFor))[0];
-          const workflowAt = nextWorkflow ? new Date(nextWorkflow.scheduledFor) : null;
-
-          // Use the earlier of the two deadlines
-          const deadlines = [followUpAt, workflowAt].filter(Boolean);
-
-          if (deadlines.length === 0) {
-            followUpStatus = 'Set Follow-up Date';
+          // Follow-up date has passed — check if BDA sent WhatsApp after followUp.at
+          const { sent, error } = await (deps.didCompanySendAfter ?? didCompanySendAfter)(phone_, followUpAt);
+          if (!error && sent) {
+            followUpStatus = 'Done';
           } else {
-            const earliest = new Date(Math.min(...deadlines.map(d => d.getTime())));
-            if (earliest >= tomorrowIST) {
-              followUpStatus = 'Upcoming';
-            } else if (earliest >= todayIST) {
-              followUpStatus = 'Due Today';
-            } else {
-              followUpStatus = 'Overdue';
-            }
+            followUpStatus = 'Overdue';
           }
         }
       }
