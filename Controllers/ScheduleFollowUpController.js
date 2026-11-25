@@ -62,6 +62,10 @@ export default async function ScheduleFollowUp(req, res) {
       });
     }
 
+    // Keep the date the BDA picked on the lead itself. The Sales Tracker sheet reads it from here; the scheduled call
+    // above is cancelled or replaced, so it is not a reliable record of what was chosen.
+    await CampaignBookingModel.updateOne({ bookingId }, { $set: { 'followUp.at': followUpDate, 'followUp.setAt': now } });
+
     const results = {
       email: { success: false, error: null },
       call: { success: false, error: null },

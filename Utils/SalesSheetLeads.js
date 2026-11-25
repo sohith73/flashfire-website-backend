@@ -96,7 +96,7 @@ export async function buildSalesSheetLeads(month, deps = {}) {
       email: b.clientEmail || '',
       country: countryFor({ campaign: b.utmCampaign, phone: b.clientPhone, market: b.leadMarket }),
       status: paid ? 'Paid' : cap(b.leadTemperature.value),
-      followUpDate: sheetDate(followUp.get(phone)?.meetingStartISO),
+      followUpDate: sheetDate(b.followUp?.at || followUp.get(phone)?.meetingStartISO),
       package: b.paymentPlan?.name ? cap(b.paymentPlan.name) : '',
       amountPaid: paid && b.paymentPlan?.price ? b.paymentPlan.price : '',
       paymentDate: paid ? sheetDate(paidAt) : '',
