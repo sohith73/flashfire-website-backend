@@ -1026,8 +1026,9 @@ async function checkGreetingAlerts() {
 }
 
 /**
- * Alert 2 — Follow-up WhatsApp not sent by the BDA's scheduled follow-up date.
- * Uses followUp.at — the date the BDA manually set in the CRM follow-up pop-up.
+ * Alert 2 — Follow-up WhatsApp not sent between meeting completed date and scheduled follow-up date.
+ * Checks: did BDA send any WhatsApp between statusChangedAt (meeting completed) and scheduledFor (follow-up due)?
+ * Fires when scheduledFor has passed and no message was sent in that window.
  */
 async function checkFollowUpAlerts() {
   if (!LEAD_ACTION_WEBHOOK) return;
@@ -1039,21 +1040,39 @@ async function checkFollowUpAlerts() {
   try {
     bookings = await CampaignBookingModel.find({
       bookingStatus: { $nin: ['paid', 'cancelled', 'ignored'] },
+      bookingStatus: 'completed',
       bdaFollowUpAlertSentAt: null,
       phone: { $nin: [null, ''] },
-      'followUp.at': { $gte: oneDayAgo, $lte: now },
-    }).select('name phone claimedBy followUp').lean();
+      statusChangedAt: { $ne: null },
+      scheduledWorkflows: {
+        $elemMatch: {
+          'step.channel': 'whatsapp',
+          status: 'scheduled',
+          scheduledFor: { $gte: oneDayAgo, $lte: now },
+        },
+      },
+    }).select('name phone claimedBy statusChangedAt scheduledWorkflows').lean();
   } catch (err) {
     console.error('[FollowUpAlert] DB query failed:', err.message);
     return;
   }
 
   for (const booking of bookings) {
-    const followUpAt = booking.followUp?.at;
-    if (!followUpAt) continue;
+    // Find the overdue whatsapp workflow step
+    const overdueWorkflow = booking.scheduledWorkflows?.find(
+      w => w.step?.channel === 'whatsapp' &&
+           w.status === 'scheduled' &&
+           new Date(w.scheduledFor) <= now &&
+           new Date(w.scheduledFor) >= oneDayAgo
+    );
+    if (!overdueWorkflow) continue;
+
+    // Check if BDA sent any WhatsApp between meeting completed and follow-up due date
+    const meetingCompletedAt = booking.statusChangedAt;
+    const followUpDueAt = overdueWorkflow.scheduledFor;
 
     try {
-      const { sent, error } = await didCompanySendAfter(booking.phone, followUpAt);
+      const { sent, error } = await didCompanySendAfter(booking.phone, meetingCompletedAt);
 
       if (error) {
         console.warn(`[FollowUpAlert] Bridge error for booking ${booking._id}: ${error}`);
@@ -1061,6 +1080,7 @@ async function checkFollowUpAlerts() {
       }
 
       if (sent) {
+        // BDA sent a message in the window — mark as resolved, no alert
         await CampaignBookingModel.updateOne(
           { _id: booking._id, bdaFollowUpAlertSentAt: null },
           { $set: { bdaFollowUpAlertSentAt: new Date(0) } }
@@ -1075,7 +1095,7 @@ async function checkFollowUpAlerts() {
       );
       if (!claimed) continue;
 
-      const elapsed = formatElapsed(minutesSince(followUpAt));
+      const elapsed = formatElapsed(minutesSince(followUpDueAt));
       const bdaName = booking.claimedBy?.name || 'Unknown BDA';
       const digits = String(booking.phone).replace(/\D/g, '').replace(/^91/, '');
       const formattedPhone = `+91 ${digits.slice(0, 5)} ${digits.slice(5)}`;
@@ -1086,7 +1106,8 @@ async function checkFollowUpAlerts() {
         `**BDA:** ${bdaName}`,
         `**Client:** ${booking.name || 'Unknown'}`,
         `**Phone:** ${formattedPhone}`,
-        `**Follow-up was due:** ${formatIST(followUpAt)}`,
+        `**Meeting completed at:** ${formatIST(meetingCompletedAt)}`,
+        `**Follow-up was due:** ${formatIST(followUpDueAt)}`,
         `**Overdue by:** ${elapsed}`,
       ].join('\n');
 
