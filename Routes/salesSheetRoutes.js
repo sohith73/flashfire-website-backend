@@ -85,24 +85,25 @@ export function registerSalesSheetRoutes(app, deps = {}) {
           followUpStatus = 'Overdue';
         }
       } else {
-        // Meeting completed — determine follow-up deadline from followUp.at
-        const followUpAt = booking.followUp?.at ? new Date(booking.followUp.at) : null;
+        // Meeting completed — use followUp.at if set, else fall back to earliest scheduled WhatsApp workflow date
+        const followUpAt = booking.followUp?.at
+          ? new Date(booking.followUp.at)
+          : (() => {
+              const waScheduled = (booking.scheduledWorkflows ?? [])
+                .filter(w => w.step?.channel === 'whatsapp' && w.status === 'scheduled' && w.scheduledFor)
+                .map(w => new Date(w.scheduledFor))
+                .sort((a, b) => a - b);
+              return waScheduled[0] ?? null;
+            })();
 
         if (!followUpAt) {
-          // No follow-up date set — if meeting was completed more than 1 day ago, BDA should have set one by now
-          const meetingDayIST = new Date(statusChangedAt);
-          const meetingMidnightIST = new Date(meetingDayIST.getTime() + 5.5 * 3600 * 1000);
-          meetingMidnightIST.setUTCHours(0, 0, 0, 0);
-          const dayAfterMeetingIST = new Date(meetingMidnightIST.getTime() + 24 * 3600 * 1000);
-          followUpStatus = todayIST >= dayAfterMeetingIST ? 'Set Follow-up Date' : 'Upcoming';
+          followUpStatus = 'Upcoming';
         } else if (followUpAt >= tomorrowIST) {
-          // Follow-up date is in the future
           followUpStatus = 'Upcoming';
         } else if (followUpAt >= todayIST) {
-          // Follow-up date is today
           followUpStatus = 'Due Today';
         } else {
-          // Follow-up date has passed — check if BDA sent WhatsApp after followUp.at
+          // Follow-up date has passed — check if BDA sent WhatsApp after followUpAt
           const { sent, error } = await (deps.didCompanySendAfter ?? didCompanySendAfter)(phone_, followUpAt);
           if (!error && sent) {
             followUpStatus = 'Done';
