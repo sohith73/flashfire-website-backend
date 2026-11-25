@@ -1,6 +1,7 @@
 import { PaymentModel } from "../Schema_Models/Payment.js";
 import { DiscordConnect } from "../Utils/DiscordConnect.js";
 import { sendPaymentConfirmationEmail } from "../Utils/PaymentEmailHelper.js";
+import { kickAutoOnboard } from "../Utils/AutoOnboard.js";
 
 /**
  * Create a new payment record
@@ -66,6 +67,9 @@ export const createPayment = async (req, res) => {
       utmMedium: utmMedium || null,
       utmCampaign: utmCampaign || null,
     });
+
+    // A stored completed payment: tell the dashboard team on Discord right away. Creates no dashboard.
+    kickAutoOnboard();
 
     console.log('✅ Payment saved to database:', {
       paymentId: payment.paymentId,
