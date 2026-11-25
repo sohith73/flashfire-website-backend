@@ -2,7 +2,7 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
-import { monthBounds, countryFor, sheetDate, buildSalesSheetLeads } from '../Utils/SalesSheetLeads.js';
+import { monthBounds, countryFor, sheetDate, sheetDateTime, buildSalesSheetLeads } from '../Utils/SalesSheetLeads.js';
 import { makeKeyCheck } from '../Utils/IntegrationKeyAuth.js';
 import { registerSalesSheetRoutes } from '../Routes/salesSheetRoutes.js';
 
@@ -10,7 +10,7 @@ const chain = (rows) => ({ sort: () => chain(rows), select: () => chain(rows), l
 const booking = (o) => ({
   bookingId: o.id, clientName: o.name, clientPhone: o.phone, clientEmail: o.email || `${o.id}@x.test`,
   leadTemperature: { value: o.temp || 'hot', ratedByEmail: o.by, ratedAt: new Date('2026-11-10T10:00:00Z') },
-  bookingStatus: o.status || 'completed', utmCampaign: o.camp ?? null, leadMarket: o.market ?? null,
+  scheduledEventStartTime: o.meeting ?? new Date('2026-11-09T13:30:00Z'), bookingStatus: o.status || 'completed', utmCampaign: o.camp ?? null, leadMarket: o.market ?? null,
   paymentPlan: o.plan ?? null, statusHistory: o.hist ?? [], calendlyHost: o.host ? { email: o.host } : undefined,
 });
 
@@ -24,6 +24,12 @@ describe('month bounds and helpers', () => {
     assert.equal(monthBounds('nope'), null);
   });
   it('formats dates in IST', () => assert.equal(sheetDate('2026-11-16T20:00:00Z'), '17-Nov-2026'));
+  it('formats the meeting date and time in IST', () => {
+    assert.equal(sheetDateTime('2026-11-16T13:30:00Z'), '16-Nov-2026 7:00 PM');
+    assert.equal(sheetDateTime('2026-11-16T00:15:00Z'), '16-Nov-2026 5:45 AM');
+    assert.equal(sheetDateTime('2026-11-16T06:30:00Z'), '16-Nov-2026 12:00 PM');
+    assert.equal(sheetDateTime(null), '');
+  });
   it('picks the country from the campaign, then the phone prefix, then the market', () => {
     assert.equal(countryFor({ campaign: 'UK Job - Arun – United Kingdom', phone: '+4915' }), 'UK');
     assert.equal(countryFor({ campaign: 'Europe - Job - Arun', phone: '+4915774871821' }), 'Germany');
@@ -49,6 +55,7 @@ describe('buildSalesSheetLeads', () => {
     const s = out.executives.find((x) => x.key === 'siddhartha');
     assert.deepEqual(k.map((l) => l.bookingId), ['a', 'f'], 'duplicate phone dropped');
     assert.equal(k[0].country, 'UK');
+    assert.equal(k[0].meetingDateTime, '09-Nov-2026 7:00 PM');
     assert.equal(k[1].status, 'Paid');
     assert.equal(k[1].amountPaid, 149);
     assert.equal(k[1].package, 'Ignite');

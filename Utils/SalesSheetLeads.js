@@ -30,6 +30,15 @@ export function sheetDate(d) {
   return `${String(t.getUTCDate()).padStart(2, '0')}-${MONTHS[t.getUTCMonth()]}-${t.getUTCFullYear()}`;
 }
 
+/** '16-Nov-2026 7:00 PM' in IST, or '' when there is no date. */
+export function sheetDateTime(d) {
+  if (!d) return '';
+  const t = new Date(new Date(d).getTime() + IST_MS);
+  const h = t.getUTCHours();
+  const h12 = h % 12 || 12;
+  return `${sheetDate(d)} ${h12}:${String(t.getUTCMinutes()).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
+}
+
 export function countryFor({ campaign, phone, market }) {
   const c = String(campaign || '');
   if (/united kingdom|\buk\b/i.test(c)) return 'UK';
@@ -96,6 +105,7 @@ export async function buildSalesSheetLeads(month, deps = {}) {
       email: b.clientEmail || '',
       country: countryFor({ campaign: b.utmCampaign, phone: b.clientPhone, market: b.leadMarket }),
       status: paid ? 'Paid' : cap(b.leadTemperature.value),
+      meetingDateTime: sheetDateTime(b.scheduledEventStartTime),
       followUpDate: sheetDate(b.followUp?.at || followUp.get(phone)?.meetingStartISO),
       package: b.paymentPlan?.name ? cap(b.paymentPlan.name) : '',
       amountPaid: paid && b.paymentPlan?.price ? b.paymentPlan.price : '',
