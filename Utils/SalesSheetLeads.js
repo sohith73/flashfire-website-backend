@@ -78,7 +78,7 @@ export async function buildSalesSheetLeads(month, deps = {}) {
     'leadTemperature.value': { $in: ['hot', 'warm'] },
     'leadTemperature.ratedAt': { $gte: bounds.from, $lt: bounds.to },
   }).sort({ 'leadTemperature.ratedAt': 1 }).lean();
-  const calls = await Calls.find({ source: 'crm_followup', status: { $ne: 'cancelled' } }).select('phoneNumber meetingStartISO createdAt').lean();
+  const calls = await Calls.find({ source: 'crm_followup' }).select('phoneNumber meetingStartISO createdAt').lean();
   const followUp = new Map();
   for (const c of calls) {
     const k = digits(c.phoneNumber);
@@ -107,7 +107,7 @@ export async function buildSalesSheetLeads(month, deps = {}) {
       status: paid ? 'Paid' : cap(b.leadTemperature.value),
       meetingDateTime: sheetDateTime(b.scheduledEventStartTime),
       followUpDate: sheetDate(b.followUp?.at || followUp.get(phone)?.meetingStartISO),
-      package: b.paymentPlan?.name ? cap(b.paymentPlan.name) : '',
+      package: cap(b.paymentPlan?.name || b.followUp?.plan || ''),
       amountPaid: paid && b.paymentPlan?.price ? b.paymentPlan.price : '',
       paymentDate: paid ? sheetDate(paidAt) : '',
     });

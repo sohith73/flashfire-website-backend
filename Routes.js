@@ -62,7 +62,7 @@ import {
   getMeetingNotes,
   getLeadsAnalytics
 } from "./Controllers/CampaignBookingController.js";
-import ScheduleFollowUp from "./Controllers/ScheduleFollowUpController.js";
+import ScheduleFollowUp, { updateFollowUpPlan } from "./Controllers/ScheduleFollowUpController.js";
 import {
   syncDiscordBdaReminders,
   processDiscordMeetRemindersHttp,
@@ -576,6 +576,7 @@ registerAbsenceRoutes(app);
   app.post('/api/campaign-bookings/:bookingId/meeting-notes', getMeetingNotes); // Get meeting notes from Fireflies
   app.put('/api/campaign-bookings/:bookingId/amount', updateBookingAmount); // Update booking amount (leads only)
   app.post('/api/campaign-bookings/:bookingId/follow-up', ScheduleFollowUp); // Schedule follow-up (email, call, WhatsApp)
+  app.put('/api/campaign-bookings/:bookingId/follow-up-plan', requireCrmUser, updateFollowUpPlan); // Set or clear the package a lead leans towards
   app.post('/api/campaign-bookings/frontend-capture', captureFrontendBooking); // Capture from frontend (backup)
   
   // ==================== FACEBOOK CONVERSION API ROUTES ====================

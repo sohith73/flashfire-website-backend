@@ -8,10 +8,40 @@ import { getRescheduleLinkForBooking } from '../Utils/CalendlyAPIHelper.js';
 
 sgMail.setApiKey(process.env.SENDGRID_API_KEY_1);
 
+export const FOLLOW_UP_PLANS = Object.freeze(['PRIME', 'IGNITE', 'PROFESSIONAL', 'EXECUTIVE']);
+/** 'ignite' or 'IGNITE' to 'IGNITE'; anything else (including empty) to null. */
+export function normalizePlan(v) {
+  const up = String(v ?? '').trim().toUpperCase();
+  return FOLLOW_UP_PLANS.includes(up) ? up : null;
+}
+
+/** PUT /api/campaign-bookings/:bookingId/follow-up-plan  { plan: 'IGNITE' | null }: set or clear the package a lead leans towards. */
+export async function updateFollowUpPlan(req, res) {
+  try {
+    const { bookingId } = req.params;
+    const raw = req.body?.plan;
+    const clearing = raw === null || raw === '';
+    const plan = clearing ? null : normalizePlan(raw);
+    if (!clearing && !plan) {
+      return res.status(400).json({ success: false, message: `plan must be one of ${FOLLOW_UP_PLANS.join(', ')} or null` });
+    }
+    const updated = await CampaignBookingModel.findOneAndUpdate({ bookingId }, { $set: { 'followUp.plan': plan } }, { new: true }).select('bookingId followUp').lean();
+    if (!updated) return res.status(404).json({ success: false, message: 'Booking not found' });
+    return res.status(200).json({ success: true, data: { bookingId, followUp: updated.followUp } });
+  } catch (error) {
+    Logger.error('Failed to update follow-up plan', { error: error.message });
+    return res.status(500).json({ success: false, message: 'Could not save the package' });
+  }
+}
+
 export default async function ScheduleFollowUp(req, res) {
   try {
     const { bookingId } = req.params;
     const { followUpDateTime } = req.body;
+    const plan = normalizePlan(req.body.plan);
+    if (req.body.plan != null && req.body.plan !== '' && !plan) {
+      return res.status(400).json({ success: false, message: `plan must be one of ${FOLLOW_UP_PLANS.join(', ')}` });
+    }
 
     // Validation
     if (!bookingId || !followUpDateTime) {
@@ -64,7 +94,7 @@ export default async function ScheduleFollowUp(req, res) {
 
     // Keep the date the BDA picked on the lead itself. The Sales Tracker sheet reads it from here; the scheduled call
     // above is cancelled or replaced, so it is not a reliable record of what was chosen.
-    await CampaignBookingModel.updateOne({ bookingId }, { $set: { 'followUp.at': followUpDate, 'followUp.setAt': now } });
+    await CampaignBookingModel.updateOne({ bookingId }, { $set: { 'followUp.at': followUpDate, 'followUp.setAt': now, ...(plan ? { 'followUp.plan': plan } : {}) } });
 
     const results = {
       email: { success: false, error: null },

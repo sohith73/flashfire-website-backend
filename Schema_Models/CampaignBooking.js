@@ -435,7 +435,10 @@ export const CampaignBookingSchema = new mongoose.Schema({
   // The follow-up date a BDA picked in the CRM's follow-up pop-up (not the default next-day call the system makes).
   followUp: {
     at: { type: Date, default: null },
-    setAt: { type: Date, default: null }
+    setAt: { type: Date, default: null },
+    // The package the lead leaned towards, set by the BDA with the follow-up (or later from the leads table).
+    // Separate from paymentPlan, which means a plan was actually chosen or bought.
+    plan: { type: String, enum: ['PRIME', 'IGNITE', 'PROFESSIONAL', 'EXECUTIVE', null], default: null }
   },
   // --- Call Leads tab --------------------------------------------------------
   // A Meta lead that never booked has no owner anywhere else: claimLead() rejects
