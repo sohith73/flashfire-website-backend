@@ -969,8 +969,8 @@ async function checkGreetingAlerts() {
       bookingStatus: 'completed',
       statusChangedAt: { $gte: oneDayAgo, $lte: oneHourAgo },
       bdaGreetingAlertSentAt: null,
-      phone: { $nin: [null, ''] },
-    }).select('name phone claimedBy statusChangedAt').lean();
+      clientPhone: { $nin: [null, ''] },
+    }).select('clientName clientPhone claimedBy statusChangedAt calendlyHost originalBda').lean();
   } catch (err) {
     console.error('[GreetingAlert] DB query failed:', err.message);
     return;
@@ -978,7 +978,9 @@ async function checkGreetingAlerts() {
 
   for (const booking of bookings) {
     try {
-      const { sent, error } = await didCompanySendAfter(booking.phone, booking.statusChangedAt);
+      const bdaEmail = (booking.calendlyHost?.email || booking.originalBda?.email || '').toLowerCase();
+      const executiveKey = bdaEmail.includes('kalpataru') ? 'kalpataru' : 'siddhartha';
+      const { sent, error } = await didCompanySendAfter(booking.clientPhone, booking.statusChangedAt, executiveKey);
 
       if (error) {
         console.warn(`[GreetingAlert] Bridge error for booking ${booking._id}: ${error}`);
@@ -1004,13 +1006,13 @@ async function checkGreetingAlerts() {
 
       const elapsed = formatElapsed(minutesSince(booking.statusChangedAt));
       const bdaName = booking.claimedBy?.name || 'Unknown BDA';
-      const formattedPhone = `+${String(booking.phone).replace(/\D/g, '')}`;
+      const formattedPhone = `+${String(booking.clientPhone).replace(/\D/g, '')}`;
 
       const msg = [
         `🚨 **Greeting Not Sent — 1 Hour Passed**`,
         ``,
         `**BDA:** ${bdaName}`,
-        `**Client:** ${booking.name || 'Unknown'}`,
+        `**Client:** ${booking.clientName || 'Unknown'}`,
         `**Phone:** ${formattedPhone}`,
         `**Meeting completed at:** ${formatIST(booking.statusChangedAt)}`,
         `**Time elapsed:** ${elapsed}`,
