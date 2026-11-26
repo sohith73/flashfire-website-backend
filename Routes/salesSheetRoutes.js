@@ -47,7 +47,7 @@ export function registerSalesSheetRoutes(app, deps = {}) {
       // Fetch booking from DB
       const query = bookingId ? { bookingId } : { clientPhone: { $regex: phone.replace(/\D/g, '') } };
       const booking = await CampaignBookingModel.findOne(query)
-        .select('bookingStatus statusChangedAt clientPhone followUp scheduledWorkflows paymentPlan')
+        .select('bookingStatus statusChangedAt clientPhone followUp scheduledWorkflows paymentPlan calendlyHost originalBda')
         .lean();
 
       if (!booking) return fail(res, 404, 'not_found', 'Booking not found');
@@ -55,6 +55,10 @@ export function registerSalesSheetRoutes(app, deps = {}) {
       const phone_ = booking.clientPhone;
       const status = booking.bookingStatus;
       const statusChangedAt = booking.statusChangedAt;
+
+      // Resolve which bridge to use based on the BDA's email
+      const bdaEmail = (booking.calendlyHost?.email || booking.originalBda?.email || '').toLowerCase();
+      const executiveKey = bdaEmail.includes('kalpataru') ? 'kalpataru' : 'siddhartha';
       const now = new Date();
       const todayIST = new Date(now.getTime() + 5.5 * 3600 * 1000);
       todayIST.setUTCHours(0, 0, 0, 0);
@@ -63,7 +67,7 @@ export function registerSalesSheetRoutes(app, deps = {}) {
       // ── Greeting status (Col 12) ──────────────────────────────────────────
       let greetingStatus = '';
       if (status === 'completed' && statusChangedAt) {
-        const { sent, error } = await (deps.didCompanySendAfter ?? didCompanySendAfter)(phone_, statusChangedAt);
+        const { sent, error } = await (deps.didCompanySendAfter ?? didCompanySendAfter)(phone_, statusChangedAt, executiveKey);
         if (!error) greetingStatus = sent ? 'Done' : 'Pending';
       }
 
@@ -104,7 +108,7 @@ export function registerSalesSheetRoutes(app, deps = {}) {
           followUpStatus = 'Due Today';
         } else {
           // Follow-up date has passed — check if BDA sent WhatsApp after followUpAt
-          const { sent, error } = await (deps.didCompanySendAfter ?? didCompanySendAfter)(phone_, followUpAt);
+          const { sent, error } = await (deps.didCompanySendAfter ?? didCompanySendAfter)(phone_, followUpAt, executiveKey);
           if (!error && sent) {
             followUpStatus = 'Done';
           } else {

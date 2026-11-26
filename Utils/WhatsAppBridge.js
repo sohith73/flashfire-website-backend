@@ -5,25 +5,36 @@
  * Checks whether the company WhatsApp number has sent a message to a client phone
  * after a given timestamp — used by lead action alert cron jobs.
  *
+ * Supports two bridges — one per executive:
+ *   WHATSAPP_BRIDGE_URL_SIDDHARTHA + WHATSAPP_BRIDGE_TOKEN_SIDDHARTHA
+ *   WHATSAPP_BRIDGE_URL_KALPATARU  + WHATSAPP_BRIDGE_TOKEN_KALPATARU
+ *
+ * Falls back to the legacy single-bridge env vars (WHATSAPP_BRIDGE_URL / WHATSAPP_BRIDGE_TOKEN)
+ * if the per-executive ones are not set.
+ *
  * The bridge stores chats under @lid JIDs internally. @s.whatsapp.net queries return
  * 0 results, so we resolve phone → lid via /api/chats first, then query by lid.
  */
 
-const BRIDGE_URL = process.env.WHATSAPP_BRIDGE_URL;
-const BRIDGE_TOKEN = process.env.WHATSAPP_BRIDGE_TOKEN;
 const TIMEOUT_MS = 10000;
-
-// In-memory cache: phone digits → lid JID (e.g. "197633205391371@lid")
-// Refreshed when a phone is not found, cleared every 30 min
-let lidCache = {};
-let lidCacheBuiltAt = 0;
 const LID_CACHE_TTL_MS = 30 * 60 * 1000;
 
-/**
- * Strip non-digits from phone number.
- * Input: "+44 7508 762523", "447508762523", "07508762523"
- * Output: "447508762523"
- */
+// Per-bridge config — keyed by executive key ('siddhartha', 'kalpataru')
+const BRIDGES = {
+  siddhartha: {
+    url: process.env.WHATSAPP_BRIDGE_URL_SIDDHARTHA || process.env.WHATSAPP_BRIDGE_URL,
+    token: process.env.WHATSAPP_BRIDGE_TOKEN_SIDDHARTHA || process.env.WHATSAPP_BRIDGE_TOKEN,
+    lidCache: {},
+    lidCacheBuiltAt: 0,
+  },
+  kalpataru: {
+    url: process.env.WHATSAPP_BRIDGE_URL_KALPATARU || process.env.WHATSAPP_BRIDGE_URL,
+    token: process.env.WHATSAPP_BRIDGE_TOKEN_KALPATARU || process.env.WHATSAPP_BRIDGE_TOKEN,
+    lidCache: {},
+    lidCacheBuiltAt: 0,
+  },
+};
+
 function normalizePhone(phone) {
   if (!phone) return null;
   let digits = String(phone).replace(/\D/g, '');
@@ -31,19 +42,15 @@ function normalizePhone(phone) {
   return digits || null;
 }
 
-/**
- * Build/refresh the phone → lid cache from /api/chats.
- * Fetches all pages until exhausted.
- */
-async function buildLidCache() {
-  if (!BRIDGE_URL || !BRIDGE_TOKEN) return;
+async function buildLidCache(bridge) {
+  if (!bridge.url || !bridge.token) return;
   const newCache = {};
   let offset = 0;
   const limit = 200;
   while (true) {
     try {
-      const res = await fetch(`${BRIDGE_URL}/api/chats?limit=${limit}&offset=${offset}`, {
-        headers: { Authorization: `Bearer ${BRIDGE_TOKEN}` },
+      const res = await fetch(`${bridge.url}/api/chats?limit=${limit}&offset=${offset}`, {
+        headers: { Authorization: `Bearer ${bridge.token}` },
         signal: AbortSignal.timeout(TIMEOUT_MS),
       });
       if (!res.ok) break;
@@ -63,63 +70,59 @@ async function buildLidCache() {
       break;
     }
   }
-  lidCache = newCache;
-  lidCacheBuiltAt = Date.now();
-  console.log(`[WhatsAppBridge] lid cache built: ${Object.keys(newCache).length} entries`);
+  bridge.lidCache = newCache;
+  bridge.lidCacheBuiltAt = Date.now();
+  console.log(`[WhatsAppBridge] lid cache built for ${bridge.url}: ${Object.keys(newCache).length} entries`);
 }
 
-/**
- * Resolve a phone number to its @lid JID used by the bridge.
- * Returns null if not found.
- */
-async function resolveToLid(phone) {
+async function resolveToLid(bridge, phone) {
   const digits = normalizePhone(phone);
   if (!digits) return null;
 
-  // Refresh cache if stale
-  if (Date.now() - lidCacheBuiltAt > LID_CACHE_TTL_MS) {
-    await buildLidCache();
+  if (Date.now() - bridge.lidCacheBuiltAt > LID_CACHE_TTL_MS) {
+    await buildLidCache(bridge);
   }
 
-  if (lidCache[digits]) return lidCache[digits];
+  if (bridge.lidCache[digits]) return bridge.lidCache[digits];
 
-  // Not found — rebuild once more in case it's a new chat
-  if (Date.now() - lidCacheBuiltAt > 60000) {
-    await buildLidCache();
+  if (Date.now() - bridge.lidCacheBuiltAt > 60000) {
+    await buildLidCache(bridge);
   }
 
-  return lidCache[digits] ?? null;
+  return bridge.lidCache[digits] ?? null;
+}
+
+function getBridge(executiveKey) {
+  return BRIDGES[executiveKey] ?? null;
 }
 
 /**
  * Check if the company sent a WhatsApp message to `phone` after `afterTime`.
+ * Pass `executiveKey` ('siddhartha' or 'kalpataru') to use the right bridge.
  *
  * Returns:
  *   { sent: true }  — a is_from_me message was found after afterTime
  *   { sent: false } — no such message found
  *   { sent: null, error: string } — bridge unreachable or error
  */
-export async function didCompanySendAfter(phone, afterTime) {
-  if (!BRIDGE_URL || !BRIDGE_TOKEN) {
-    console.warn('[WhatsAppBridge] WHATSAPP_BRIDGE_URL or WHATSAPP_BRIDGE_TOKEN not set');
+export async function didCompanySendAfter(phone, afterTime, executiveKey = 'siddhartha') {
+  const bridge = getBridge(executiveKey);
+  if (!bridge || !bridge.url || !bridge.token) {
+    console.warn(`[WhatsAppBridge] bridge not configured for executive: ${executiveKey}`);
     return { sent: null, error: 'bridge_not_configured' };
   }
 
   const digits = normalizePhone(phone);
   if (!digits) return { sent: null, error: 'invalid_phone' };
 
-  // Resolve phone to lid JID
-  const lid = await resolveToLid(digits);
-  if (!lid) {
-    // No chat found with this phone — BDA never messaged them
-    return { sent: false };
-  }
+  const lid = await resolveToLid(bridge, digits);
+  if (!lid) return { sent: false };
 
-  const url = `${BRIDGE_URL}/api/messages?chat_jid=${encodeURIComponent(lid)}&limit=50`;
+  const url = `${bridge.url}/api/messages?chat_jid=${encodeURIComponent(lid)}&limit=50`;
 
   try {
     const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${BRIDGE_TOKEN}` },
+      headers: { Authorization: `Bearer ${bridge.token}` },
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
 
@@ -147,16 +150,17 @@ export async function didCompanySendAfter(phone, afterTime) {
 }
 
 /**
- * Check bridge health and auth state.
+ * Check bridge health for a given executive.
  * Returns { ok: true, auth_state } or { ok: false, error }
  */
-export async function getBridgeStatus() {
-  if (!BRIDGE_URL || !BRIDGE_TOKEN) {
+export async function getBridgeStatus(executiveKey = 'siddhartha') {
+  const bridge = getBridge(executiveKey);
+  if (!bridge || !bridge.url || !bridge.token) {
     return { ok: false, error: 'bridge_not_configured' };
   }
   try {
-    const res = await fetch(`${BRIDGE_URL}/api/status`, {
-      headers: { Authorization: `Bearer ${BRIDGE_TOKEN}` },
+    const res = await fetch(`${bridge.url}/api/status`, {
+      headers: { Authorization: `Bearer ${bridge.token}` },
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
     if (!res.ok) return { ok: false, error: `status_${res.status}` };
