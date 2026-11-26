@@ -970,6 +970,7 @@ async function checkGreetingAlerts() {
       statusChangedAt: { $gte: oneDayAgo, $lte: oneHourAgo },
       bdaGreetingAlertSentAt: null,
       clientPhone: { $nin: [null, ''] },
+      'calendlyHost.email': { $in: ['kalpataru@flashfirehq.com', 'siddhartha@flashfirehq.com'] },
     }).select('clientName clientPhone claimedBy statusChangedAt calendlyHost originalBda').lean();
   } catch (err) {
     console.error('[GreetingAlert] DB query failed:', err.message);
@@ -1044,6 +1045,7 @@ async function checkFollowUpAlerts() {
       bdaFollowUpAlertSentAt: null,
       clientPhone: { $nin: [null, ''] },
       statusChangedAt: { $ne: null },
+      'calendlyHost.email': { $in: ['kalpataru@flashfirehq.com', 'siddhartha@flashfirehq.com'] },
       scheduledWorkflows: {
         $elemMatch: {
           'step.channel': 'whatsapp',
