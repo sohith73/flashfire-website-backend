@@ -1005,7 +1005,7 @@ async function checkGreetingAlerts() {
       if (!claimed) continue;
 
       const elapsed = formatElapsed(minutesSince(booking.statusChangedAt));
-      const bdaName = booking.claimedBy?.name || 'Unknown BDA';
+      const bdaName = booking.calendlyHost?.name || booking.originalBda?.name || booking.claimedBy?.name || 'Unknown BDA';
       const formattedPhone = `+${String(booking.clientPhone).replace(/\D/g, '')}`;
 
       const msg = [
@@ -1098,7 +1098,7 @@ async function checkFollowUpAlerts() {
       if (!claimed) continue;
 
       const elapsed = formatElapsed(minutesSince(followUpDueAt));
-      const bdaName = booking.claimedBy?.name || 'Unknown BDA';
+      const bdaName = booking.calendlyHost?.name || booking.originalBda?.name || booking.claimedBy?.name || 'Unknown BDA';
       const formattedPhone = `+${String(booking.clientPhone).replace(/\D/g, '')}`;
 
       const msg = [
