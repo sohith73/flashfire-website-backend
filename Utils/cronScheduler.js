@@ -1042,7 +1042,7 @@ async function checkFollowUpAlerts() {
     bookings = await CampaignBookingModel.find({
       bookingStatus: 'completed',
       bdaFollowUpAlertSentAt: null,
-      phone: { $nin: [null, ''] },
+      clientPhone: { $nin: [null, ''] },
       statusChangedAt: { $ne: null },
       scheduledWorkflows: {
         $elemMatch: {
@@ -1051,7 +1051,7 @@ async function checkFollowUpAlerts() {
           scheduledFor: { $gte: oneDayAgo, $lte: now },
         },
       },
-    }).select('name phone claimedBy statusChangedAt scheduledWorkflows').lean();
+    }).select('clientName clientPhone claimedBy statusChangedAt scheduledWorkflows calendlyHost originalBda').lean();
   } catch (err) {
     console.error('[FollowUpAlert] DB query failed:', err.message);
     return;
@@ -1072,7 +1072,9 @@ async function checkFollowUpAlerts() {
     const followUpDueAt = overdueWorkflow.scheduledFor;
 
     try {
-      const { sent, error } = await didCompanySendAfter(booking.phone, meetingCompletedAt);
+      const bdaEmail = (booking.calendlyHost?.email || booking.originalBda?.email || '').toLowerCase();
+      const executiveKey = bdaEmail.includes('kalpataru') ? 'kalpataru' : 'siddhartha';
+      const { sent, error } = await didCompanySendAfter(booking.clientPhone, meetingCompletedAt, executiveKey);
 
       if (error) {
         console.warn(`[FollowUpAlert] Bridge error for booking ${booking._id}: ${error}`);
@@ -1097,13 +1099,13 @@ async function checkFollowUpAlerts() {
 
       const elapsed = formatElapsed(minutesSince(followUpDueAt));
       const bdaName = booking.claimedBy?.name || 'Unknown BDA';
-      const formattedPhone = `+${String(booking.phone).replace(/\D/g, '')}`;
+      const formattedPhone = `+${String(booking.clientPhone).replace(/\D/g, '')}`;
 
       const msg = [
         `⏰ **Follow-up Not Done**`,
         ``,
         `**BDA:** ${bdaName}`,
-        `**Client:** ${booking.name || 'Unknown'}`,
+        `**Client:** ${booking.clientName || 'Unknown'}`,
         `**Phone:** ${formattedPhone}`,
         `**Meeting completed at:** ${formatIST(meetingCompletedAt)}`,
         `**Follow-up was due:** ${formatIST(followUpDueAt)}`,
