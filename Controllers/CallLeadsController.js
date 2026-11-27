@@ -311,8 +311,7 @@ function cutoffDate() {
 function baseMatch() {
   return {
     ...META_LEAD_MATCH,
-    bookingStatus: 'not-scheduled',
-    scheduledEventStartTime: null,
+    bookingStatus: { $in: ['not-scheduled', 'no-show'] },
     bookingCreatedAt: { $lte: cutoffDate() },
   };
 }
@@ -321,11 +320,8 @@ function baseMatch() {
 /* BDA assignment                                                            */
 /* ------------------------------------------------------------------------ */
 
-// Every call lead goes to this one BDA. The round-robin across active BDAs was
-// removed on request (2026-07-29, "assign all of these calling leads to Kalpataru
-// for now") — to bring it back, restore the fewest-leads-wins loop that used to
-// live in assignUnassignedCallLeads (git history has it).
-const FIXED_ASSIGNEE_EMAIL = 'kalpataru@flashfirehq.com';
+// Call leads are distributed round-robin between these two BDAs (oldest lead first).
+const CALL_BDA_EMAILS = ['kalpataru@flashfirehq.com', 'siddhartha@flashfirehq.com'];
 
 /**
  * The active non-admin BDAs, in a stable order. Used for view scoping.
@@ -375,21 +371,23 @@ async function ownScopeEmail(req) {
  * concurrently. Oldest leads go first — they have waited longest.
  */
 export async function assignUnassignedCallLeads({ limit = 5000 } = {}) {
-  const assignee = await CrmUserModel.findOne({
-    email: FIXED_ASSIGNEE_EMAIL,
+  // Load only the BDAs in CALL_BDA_EMAILS that are active
+  const bdaDocs = await CrmUserModel.find({
+    email: { $in: CALL_BDA_EMAILS },
     isActive: { $ne: false },
   })
     .select('email name')
     .lean();
 
-  if (!assignee) {
-    return { ok: true, assigned: 0, reason: `fixed assignee ${FIXED_ASSIGNEE_EMAIL} not found or inactive` };
+  if (bdaDocs.length === 0) {
+    return { ok: true, assigned: 0, reason: 'no active call BDAs found' };
   }
 
-  const pick = {
-    email: String(assignee.email).toLowerCase().trim(),
-    name: assignee.name || assignee.email,
-  };
+  // Keep stable order matching CALL_BDA_EMAILS
+  const assignees = CALL_BDA_EMAILS
+    .map((e) => bdaDocs.find((d) => String(d.email).toLowerCase().trim() === e))
+    .filter(Boolean)
+    .map((d) => ({ email: String(d.email).toLowerCase().trim(), name: d.name || d.email }));
 
   const pending = await CampaignBookingModel.find({
     ...baseMatch(),
@@ -400,21 +398,24 @@ export async function assignUnassignedCallLeads({ limit = 5000 } = {}) {
     .limit(limit)
     .lean();
 
-  if (pending.length === 0) return { ok: true, assigned: 0, assignee: pick.email };
+  if (pending.length === 0) return { ok: true, assigned: 0 };
 
   const now = new Date();
-  const ops = pending.map((lead) => ({
-    updateOne: {
-      filter: { bookingId: lead.bookingId, 'callLeadAssignee.email': { $in: [null, ''] } },
-      update: {
-        $set: {
-          'callLeadAssignee.email': pick.email,
-          'callLeadAssignee.name': pick.name,
-          'callLeadAssignee.assignedAt': now,
+  const ops = pending.map((lead, i) => {
+    const pick = assignees[i % assignees.length];
+    return {
+      updateOne: {
+        filter: { bookingId: lead.bookingId, 'callLeadAssignee.email': { $in: [null, ''] } },
+        update: {
+          $set: {
+            'callLeadAssignee.email': pick.email,
+            'callLeadAssignee.name': pick.name,
+            'callLeadAssignee.assignedAt': now,
+          },
         },
       },
-    },
-  }));
+    };
+  });
 
   const result = await CampaignBookingModel.bulkWrite(ops, { ordered: false });
 
@@ -422,7 +423,7 @@ export async function assignUnassignedCallLeads({ limit = 5000 } = {}) {
     ok: true,
     assigned: result.modifiedCount ?? 0,
     considered: pending.length,
-    assignee: pick.email,
+    assignees: assignees.map((a) => a.email),
   };
 }
 
@@ -971,7 +972,7 @@ export async function buildCallLeadsDailySummary(end = new Date()) {
   const calls = await CallLogModel.find({
     startedAt: { $gte: windowStart, $lt: end },
     direction: { $ne: 'internal' },
-    salesEmail: FIXED_ASSIGNEE_EMAIL,
+    salesEmail: { $in: CALL_BDA_EMAILS },
   })
     .select('salesEmail salesName leadNumberNormalized durationSec')
     .lean();
