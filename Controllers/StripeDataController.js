@@ -1,5 +1,7 @@
 import Stripe from "stripe";
 import { ManualPaymentModel } from "../Schema_Models/ManualPaymentModel.js";
+import { CampaignBookingModel } from "../Schema_Models/CampaignBooking.js";
+import { getClientTrackingRecordModel, getProfileModel } from "../Utils/ClientsTrackingDB.js";
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || "";
 const stripe = stripeSecretKey ? new Stripe(stripeSecretKey) : null;
@@ -270,3 +272,123 @@ export async function getPaidPlanPayments() {
   paidPaymentsCache = { at: Date.now(), rows };
   return rows;
 }
+
+const JUNK_REFERRALS = new Set([
+  "", "no", "none", "na", "n/a", "nobody", "myself", "self",
+  "i saw in the social media", "social media", "instagram",
+  "facebook", "youtube", "google", "online",
+]);
+function isRealReferral(v) {
+  return v && !JUNK_REFERRALS.has(String(v).trim().toLowerCase());
+}
+
+/**
+ * Source breakdown for the Stripe Data view — classifies each payment as
+ * Meta / Referral / Direct by joining Stripe emails against CRM (UTM data)
+ * and dashboard profiles (referredBy field via dashboardtrackings bridge).
+ * Query params: month=YYYY-MM (required)
+ */
+export const getStripeSourceBreakdown = async (req, res) => {
+  try {
+    const { month } = req.query;
+    if (!month || !/^\d{4}-\d{2}$/.test(month)) {
+      return res.status(400).json({ success: false, error: "month query param required, format YYYY-MM" });
+    }
+
+    const [year, mon] = month.split("-").map(Number);
+    const from = new Date(Date.UTC(year, mon - 1, 1));
+    const to   = new Date(Date.UTC(year, mon, 1));
+
+    // All Stripe + manual payments for this month
+    const allPayments = await getPaidPlanPayments();
+    const monthPayments = allPayments.filter((p) => p.date >= from && p.date < to);
+    if (monthPayments.length === 0) {
+      return res.json({ success: true, data: { month, meta: [], referral: [], direct: [] } });
+    }
+
+    const emails = [...new Set(monthPayments.map((p) => p.email).filter(Boolean))];
+
+    // CRM bookings for UTM/campaign data
+    const crmBookings = await CampaignBookingModel.find(
+      { clientEmail: { $in: emails } },
+      { clientEmail: 1, utmSource: 1, utmMedium: 1, metaCampaignName: 1, leadSource: 1, bookingStatus: 1 }
+    ).lean();
+    const crmMap = new Map();
+    for (const b of crmBookings) {
+      const e = (b.clientEmail || "").toLowerCase();
+      const existing = crmMap.get(e);
+      if (!existing || b.bookingStatus === "paid") crmMap.set(e, b);
+    }
+
+    // dashboardtrackings: bridge CRM email → dashboard email
+    const TrackingModel = await getClientTrackingRecordModel();
+    const crmToDash = new Map();
+    if (TrackingModel) {
+      const trackings = await TrackingModel.find(
+        { $or: [{ crmEmail: { $in: emails } }, { email: { $in: emails } }] },
+        { email: 1, crmEmail: 1 }
+      ).lean();
+      for (const t of trackings) {
+        const crm  = (t.crmEmail || t.email || "").toLowerCase();
+        const dash = (t.email || "").toLowerCase();
+        if (crm && dash) crmToDash.set(crm, dash);
+      }
+    }
+
+    // profiles referredBy
+    const ProfileModel = await getProfileModel();
+    const profileMap = new Map();
+    if (ProfileModel) {
+      const dashEmails = [...new Set([...crmToDash.values(), ...emails])];
+      const profiles = await ProfileModel.find({ email: { $in: dashEmails } }, { email: 1, referredBy: 1 }).lean();
+      for (const p of profiles) {
+        profileMap.set((p.email || "").toLowerCase(), p.referredBy || "");
+      }
+    }
+
+    // Classify
+    const meta = [], referral = [], direct = [];
+    for (const p of monthPayments) {
+      const email     = p.email;
+      const dashEmail = crmToDash.get(email) || email;
+      const crm       = crmMap.get(email);
+      const refBy     = profileMap.get(dashEmail) || profileMap.get(email) || "";
+      const realRef   = isRealReferral(refBy);
+      const isMeta    = crm && (
+        crm.leadSource === "meta_lead_ad" ||
+        (crm.utmMedium === "paid" && crm.metaCampaignName)
+      );
+
+      const row = {
+        email,
+        name: p.name || email,
+        planName: p.planName,
+        date: p.date.toISOString(),
+        amount: p.amount,
+        currency: p.currency,
+        detail: realRef ? String(refBy)
+               : isMeta  ? (crm.metaCampaignName || crm.utmSource || "Meta Ad")
+               : crm?.utmSource || "website/organic",
+      };
+
+      if (realRef)       referral.push(row);
+      else if (isMeta)   meta.push(row);
+      else               direct.push(row);
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        month,
+        total: monthPayments.length,
+        meta,
+        referral,
+        direct,
+        counts: { meta: meta.length, referral: referral.length, direct: direct.length },
+      },
+    });
+  } catch (err) {
+    console.error("getStripeSourceBreakdown error:", err);
+    return res.status(500).json({ success: false, error: err.message || "Failed to fetch source breakdown" });
+  }
+};
