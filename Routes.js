@@ -161,7 +161,7 @@ import { crmAdminLogin, crmAdminRequestOtp, crmAdminVerifyOtp, listCrmUsers, cre
 import { getActivityLogs, getActivityFilters } from './Controllers/ActivityLogController.js';
 import { getPaidClientsAnalytics } from './Controllers/PaidClientsController.js';
 import { getFunnelAnalytics } from './Controllers/FunnelAnalyticsController.js';
-import { getStripePaymentsByMonth, getStripeAllMonthsSummary, getStripePaidPlanMonthlySummary } from './Controllers/StripeDataController.js';
+import { getStripePaymentsByMonth, getStripeAllMonthsSummary, getStripePaidPlanMonthlySummary, getStripeSourceBreakdown } from './Controllers/StripeDataController.js';
 import { getManualPaymentsByMonth, createManualPayment, updateManualPayment, deleteManualPayment } from './Controllers/ManualPaymentController.js';
 import { generatePaymentLink, redirectShortLink } from './Controllers/PaymentLinkController.js';
 import { getPayroll, createPayroll, updatePayroll, deletePayroll } from './Controllers/PayrollController.js';
@@ -326,6 +326,7 @@ export default function Routes(app) {
   app.get('/api/crm/stripe/payments', requireCrmUser, requireCrmAnyPermission(['leads', 'meta_leads', 'lead_analytics', 'all_data']), getStripePaymentsByMonth);
   app.get('/api/crm/stripe/summary', requireCrmUser, requireCrmAnyPermission(['leads', 'meta_leads', 'lead_analytics', 'all_data']), getStripeAllMonthsSummary);
   app.get('/api/crm/stripe/paid-plan-summary', requireCrmUser, requireCrmAnyPermission(['graphs03', 'leads', 'meta_leads', 'lead_analytics', 'all_data']), getStripePaidPlanMonthlySummary);
+  app.get('/api/crm/stripe/source-breakdown', requireCrmUser, requireCrmAnyPermission(['leads', 'meta_leads', 'lead_analytics', 'all_data']), getStripeSourceBreakdown);
 
   // Raw Stripe webhook capture log — what Stripe is actually sending us.
   // /stats is declared before /:id so it is not read as an event id.

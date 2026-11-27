@@ -12,6 +12,7 @@ let connPromise = null;
 let conn = null;
 let clientUserModel = null;
 let clientTrackingRecordModel = null;
+let profileModel = null;
 
 export async function getClientsTrackingConnection() {
   if (conn) return conn;
@@ -79,4 +80,18 @@ export async function getClientTrackingRecordModel() {
     );
   }
   return clientTrackingRecordModel;
+}
+
+const profileSchema = new mongoose.Schema(
+  { email: String, referredBy: String },
+  { strict: false }
+);
+
+export async function getProfileModel() {
+  const c = await getClientsTrackingConnection();
+  if (!c) return null;
+  if (!profileModel) {
+    profileModel = c.model('DashProfile', profileSchema, 'profiles');
+  }
+  return profileModel;
 }
