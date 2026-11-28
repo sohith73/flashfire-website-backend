@@ -1138,6 +1138,23 @@ app.listen(PORT || 4001, async () => {
     console.warn('⚠️ [Server] Failed to schedule Call Leads daily summary:', error.message);
   }
 
+  // Call Leads — 12:00 AM IST Discord message: per BDA, how many no-show and not-scheduled leads
+  // from the past 3 days are still uncalled.
+  try {
+    const cronModule = await import('node-cron');
+    const { sendPendingCallLeadsSummary } = await import('./Controllers/CallLeadsController.js');
+    cronModule.default.schedule('0 0 * * *', async () => {
+      try {
+        await sendPendingCallLeadsSummary();
+      } catch (error) {
+        console.warn('⚠️ [CallLeads] pending summary failed:', error.message);
+      }
+    }, { scheduled: true, timezone: 'Asia/Kolkata' });
+    console.log('✅ [Server] Call Leads pending summary scheduled (12:00 AM IST)');
+  } catch (error) {
+    console.warn('⚠️ [Server] Failed to schedule Call Leads pending summary:', error.message);
+  }
+
   // Twilio daily cost report: yesterday's (UTC) spend, per-country split, balance and runway,
   // posted at 00:10 UTC (5:40 AM IST) to the twilio-automated-call Discord channel.
   try {

@@ -11,7 +11,8 @@ import { getTrackedBdas } from './BdaRegistry.js';
 // A letter for a level is written once per BDA per window. A BDA who jumps straight past a level (for example from 3
 // misses to 12) gets only the highest level reached, not one letter per level. Fines that are waived, voided or under
 // review do not count, so a waiver lowers the count the same way it lowers the fine.
-// Letters go by email only. Nothing is posted to Discord.
+// Letters go by email. Each letter that is sent also gets a one-line Discord post for admins (WARNING_LETTERS_DISCORD_WEBHOOK,
+// falling back to DISCORD_BDA_DEDUCTIONS_WEBHOOK_URL). A Discord failure never fails or rolls back the letter.
 //
 // Mode: live (the default) writes the letter and sends it the moment it is written. WARNING_LETTERS_MODE can override
 // it: draft writes a draft an admin reads and sends, off writes nothing.
@@ -184,6 +185,43 @@ export async function evaluateWarningLetters(now = new Date(), deps = {}) {
   return result;
 }
 
+const LEVEL_WORD = { 1: 'First', 2: 'Second', 3: 'Third' };
+let warnedNoLetterWebhook = false;
+
+/** Default Discord poster for a sent letter. Resolves { ok } and logs a warning when it cannot post. Never throws. */
+async function defaultPostLetterDiscord(content) {
+  const url = (process.env.WARNING_LETTERS_DISCORD_WEBHOOK || process.env.DISCORD_BDA_DEDUCTIONS_WEBHOOK_URL || '').trim();
+  if (!url) {
+    if (!warnedNoLetterWebhook) {
+      warnedNoLetterWebhook = true;
+      console.warn('[WarningLetters] WARNING_LETTERS_DISCORD_WEBHOOK not configured, Discord posts for sent letters are skipped');
+    }
+    return { ok: false, error: 'no_url' };
+  }
+  const { DiscordConnect } = await import('./DiscordConnect.js');
+  const res = await DiscordConnect(url, content, false);
+  return { ok: Boolean(res?.ok), error: res?.error };
+}
+
+/** One plain-text line for admins. Pure. */
+export function letterDiscordMessage(letter, windowLabel) {
+  const word = LEVEL_WORD[letter.level] || `Level ${letter.level}`;
+  const cc = (letter.ccEmails || []).length ? letter.ccEmails.join(', ') : 'none';
+  const label = windowLabel || new Date(letter.windowFrom).toLocaleDateString('en-IN', { timeZone: IST, month: 'long', year: 'numeric' });
+  return `⚠️ ${word} warning sent to ${letter.bdaName || letter.bdaEmail} — ${letter.missedCount} missed meetings in ${label}, ${inr(letter.totalAmountInr)}. Subject: ${letter.subject}. To: ${letter.toEmail || letter.bdaEmail}. Cc: ${cc}.`;
+}
+
+/** Tell admins on Discord. Best effort: any failure is logged and swallowed so the sent letter stays sent. */
+async function notifyDiscord(letter, deps) {
+  try {
+    const post = deps.postDiscord ?? defaultPostLetterDiscord;
+    const res = await post(letterDiscordMessage(letter, deps.windowLabel));
+    if (res && res.ok === false && res.error !== 'no_url') console.warn(`[WarningLetters] Discord post for ${letter.letterId} failed: ${res.error || 'unknown'}`);
+  } catch (err) {
+    console.warn(`[WarningLetters] Discord post for ${letter.letterId} threw: ${err?.message || err}`);
+  }
+}
+
 /** Send a draft (or retry a failed one). Returns { ok: true, letter } or { ok: false, status, code, message }. */
 export async function sendLetter(letterId, sentBy, deps = {}) {
   const Letter = deps.Letter ?? BdaWarningLetterModel;
@@ -202,6 +240,7 @@ export async function sendLetter(letterId, sentBy, deps = {}) {
     return { ok: false, status: 502, code: 'send_failed', message };
   }
   const letter = await Letter.findOneAndUpdate({ letterId }, { $set: { status: 'sent', sentAt: new Date(), sentBy: sentBy || 'system', error: null } }, { new: true }).lean();
+  await notifyDiscord(letter, deps);
   return { ok: true, letter };
 }
 

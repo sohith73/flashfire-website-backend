@@ -109,7 +109,7 @@ describe('route', () => {
   let server; let base;
   before(async () => {
     const app = express();
-    registerSalesSheetRoutes(app, { keyOk: async (k) => k === 'good', build: async (m) => (m === '2026-11' ? { month: m, label: 'Nov 2026', executives: [], skippedOtherExecutives: 0 } : null) });
+    registerSalesSheetRoutes(app, { keyOk: async (k) => k === 'good', buildCallLeads: async ({ days }) => ({ generatedAt: 'x', windowDays: days, summary: [], leads: [] }), build: async (m) => (m === '2026-11' ? { month: m, label: 'Nov 2026', executives: [], skippedOtherExecutives: 0 } : null) });
     await new Promise((r) => { server = app.listen(0, r); });
     base = `http://127.0.0.1:${server.address().port}`;
   });
@@ -117,6 +117,15 @@ describe('route', () => {
   const get = (path, key) => fetch(base + path, { headers: key ? { 'X-Sheet-Secret': key } : {} });
   it('401 without the key', async () => assert.equal((await get('/api/sales-sheet/leads?month=2026-11')).status, 401));
   it('422 for a bad month', async () => assert.equal((await get('/api/sales-sheet/leads?month=x', 'good')).status, 422));
+  it('call-leads: 401 without the key, 422 for bad days, 200 otherwise', async () => {
+    assert.equal((await get('/api/sales-sheet/call-leads')).status, 401);
+    assert.equal((await get('/api/sales-sheet/call-leads?days=0', 'good')).status, 422);
+    const ok = await get('/api/sales-sheet/call-leads?days=3', 'good');
+    assert.equal(ok.status, 200);
+    const body = await ok.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.windowDays, 3);
+  });
   it('200 with the key', async () => {
     const res = await get('/api/sales-sheet/leads?month=2026-11', 'good');
     assert.equal(res.status, 200);
