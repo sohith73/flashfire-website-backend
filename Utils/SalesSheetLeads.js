@@ -57,6 +57,12 @@ const cap = (s) => (s ? String(s).charAt(0).toUpperCase() + String(s).slice(1).t
 const digits = (p) => String(p || '').replace(/\D/g, '');
 
 /** Who ran the meeting: the BDA who rated it, else the one it was assigned to, when that is a sheet executive. */
+/** The BDA's note on the lead, on one line and capped so one long transcript summary cannot bloat a cell. */
+export function sheetNote(raw, max = 1000) {
+  const t = String(raw ?? '').replace(/\s*\n+\s*/g, ' | ').trim();
+  return t.length > max ? `${t.slice(0, max - 1)}…` : t;
+}
+
 export function executiveFor(booking) {
   const byEmail = (e) => SHEET_EXECUTIVES.find((x) => x.email === String(e || '').toLowerCase());
   return byEmail(booking.leadTemperature?.ratedByEmail)
@@ -108,6 +114,7 @@ export async function buildSalesSheetLeads(month, deps = {}) {
       meetingDateTime: sheetDateTime(b.scheduledEventStartTime),
       followUpDate: sheetDate(b.followUp?.at || followUp.get(phone)?.meetingStartISO),
       package: cap(b.paymentPlan?.name || b.followUp?.plan || ''),
+      notes: sheetNote(b.meetingNotes),
       amountPaid: paid && b.paymentPlan?.price ? b.paymentPlan.price : '',
       paymentDate: paid ? sheetDate(paidAt) : '',
     });
