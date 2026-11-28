@@ -4,10 +4,13 @@ import { buildSalesSheetLeads } from '../Utils/SalesSheetLeads.js';
 import { didCompanySendAfter } from '../Utils/WhatsAppBridge.js';
 import { buildPendingCallLeads } from '../Controllers/CallLeadsController.js';
 import { CampaignBookingModel } from '../Schema_Models/CampaignBooking.js';
+import { normalizePlan, FOLLOW_UP_PLANS } from '../Controllers/ScheduleFollowUpController.js';
+import express from 'express';
 
 // Sales Tracker sheet feed. The sheet's Apps Script calls this once a day and adds the month's hot and warm leads it
 // does not have yet.
 //   GET /api/sales-sheet/call-leads?days=3      header X-Sheet-Secret: no-show + not-scheduled leads per BDA, for the Call Leads tab
+//   POST /api/sales-sheet/package {phone|email, plan}   header X-Sheet-Secret: a BDA picked the package in the sheet, save it on the lead
 //   GET /api/sales-sheet/leads?month=YYYY-MM    header X-Sheet-Secret (32+ characters, enrolled on first use)
 // WhatsApp status for Col 12 (Greetings Message) and Col 13 (Follow-up Alert):
 //   GET /api/sales-sheet/whatsapp-status?phone=447508762523&bookingId=booking_xxx   header X-Sheet-Secret
@@ -29,6 +32,31 @@ export function registerSalesSheetRoutes(app, deps = {}) {
     } catch (err) {
       console.error('[salesSheet] call-leads failed:', err?.message);
       return fail(res, 500, 'call_leads_failed', 'Could not build the call leads list');
+    }
+  });
+
+  // The sheet's Package dropdown writes back here, so the CRM and the sheet never disagree about a lead's package.
+  app.post('/api/sales-sheet/package', limiter, express.json({ limit: '10kb' }), async (req, res) => {
+    try {
+      if (!(await (deps.keyOk ?? keyOk)(req.get('x-sheet-secret')))) return fail(res, 401, 'bad_secret', 'Missing or wrong X-Sheet-Secret');
+      const raw = req.body?.plan;
+      const clearing = raw === null || raw === '';
+      const plan = clearing ? null : normalizePlan(raw);
+      if (!clearing && !plan) return fail(res, 422, 'invalid_plan', `plan must be one of ${FOLLOW_UP_PLANS.join(', ')}`);
+      const digits = String(req.body?.phone || '').replace(/\D/g, '');
+      const email = String(req.body?.email || '').trim().toLowerCase();
+      if (digits.length < 7 && !email) return fail(res, 422, 'missing_lead', 'phone or email is required');
+      const or = [];
+      if (digits.length >= 7) or.push({ normalizedClientPhone: digits.slice(-10) });
+      if (email) or.push({ clientEmail: email });
+      const lead = await CampaignBookingModel.findOne({ $or: or }).sort({ scheduledEventStartTime: -1 }).select('bookingId paymentPlan').lean();
+      if (!lead) return fail(res, 404, 'not_found', 'No lead matches that phone or email');
+      if (lead.paymentPlan?.name) return fail(res, 409, 'already_paid', 'This lead already bought a plan, its package cannot change');
+      await CampaignBookingModel.updateOne({ bookingId: lead.bookingId }, { $set: { 'followUp.plan': plan } });
+      return res.status(200).json({ success: true, bookingId: lead.bookingId, plan });
+    } catch (err) {
+      console.error('[salesSheet] package write-back failed:', err?.message);
+      return fail(res, 500, 'package_failed', 'Could not save the package');
     }
   });
 
