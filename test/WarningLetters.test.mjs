@@ -51,7 +51,8 @@ const wipe = async () => {
   invalidateRegistryCache();
 };
 const sent = [];
-const deps = (extra = {}) => ({ sendMail: async (m) => { sent.push(m); }, ...extra });
+const discord = [];
+const deps = (extra = {}) => ({ sendMail: async (m) => { sent.push(m); }, postDiscord: async (c) => { discord.push(c); return { ok: true }; }, ...extra });
 
 before(async () => {
   await connectTestDb();
@@ -70,6 +71,7 @@ after(async () => {
 beforeEach(async () => {
   await wipe();
   sent.length = 0;
+  discord.length = 0;
   for (const [email, name] of [[BDA, 'Warn Bda'], [OTHER, 'Other Bda']]) {
     await BdaProfileModel.create({ email, displayName: name, firstName: name.split(' ')[0].toLowerCase(), tracked: true, active: true, trackedSince: new Date('2026-01-02') });
   }
@@ -168,7 +170,7 @@ describe('evaluateWarningLetters', () => {
     assert.match(letters[1].subject, /in December 2026$/);
   });
 
-  it('writes again after a dismissed letter, and posts nothing to Discord', async () => {
+  it('writes again after a dismissed letter, and posts one Discord line', async () => {
     await fines(BDA, 7);
     await evaluateWarningLetters(NOW, deps({ mode: 'draft' }));
     const first = await BdaWarningLetterModel.findOne({ bdaEmail: BDA });
@@ -218,6 +220,30 @@ describe('sending and dismissing', () => {
     assert.equal(row.status, 'failed');
     assert.equal(row.error, 'mailbox full');
     assert.equal((await sendLetter(l.letterId, ADMIN, deps())).ok, true, 'a failed letter can be sent again');
+  });
+
+  it('posts one Discord line after a successful send', async () => {
+    const l = await draft();
+    await sendLetter(l.letterId, ADMIN, deps());
+    assert.equal(discord.length, 1);
+    assert.match(discord[0], /^⚠️ First warning sent to Warn Bda — 7 missed meetings in .+, ₹3,500\. Subject: .+\. To: .+\. Cc: .+\.$/);
+  });
+
+  it('does not post to Discord when the send fails', async () => {
+    const l = await draft();
+    const bad = await sendLetter(l.letterId, ADMIN, deps({ sendMail: async () => { throw new Error('mailbox full'); } }));
+    assert.equal(bad.ok, false);
+    assert.equal(discord.length, 0);
+  });
+
+  it('keeps the letter sent when the Discord call throws or reports failure', async () => {
+    const l = await draft();
+    const r = await sendLetter(l.letterId, ADMIN, deps({ postDiscord: async () => { throw new Error('discord down'); } }));
+    assert.equal(r.ok, true);
+    assert.equal((await BdaWarningLetterModel.findOne({ letterId: l.letterId }).lean()).status, 'sent');
+    const l2 = await BdaWarningLetterModel.create({ bdaEmail: OTHER, bdaName: 'Other Bda', level: 1, threshold: 7, missedCount: 7, windowFrom: NOW, windowTo: NOW, totalAmountInr: 0, status: 'draft', subject: 's', bodyText: 't', bodyHtml: 'h' });
+    const r2 = await sendLetter(l2.letterId, ADMIN, deps({ postDiscord: async () => ({ ok: false, error: 'http_500' }) }));
+    assert.equal(r2.ok, true);
   });
 
   it('dismisses a draft but not a sent letter, and 404s an unknown one', async () => {

@@ -2,10 +2,12 @@ import { createUserRateLimiter } from '../Middlewares/perUserRateLimit.js';
 import { makeKeyCheck } from '../Utils/IntegrationKeyAuth.js';
 import { buildSalesSheetLeads } from '../Utils/SalesSheetLeads.js';
 import { didCompanySendAfter } from '../Utils/WhatsAppBridge.js';
+import { buildPendingCallLeads } from '../Controllers/CallLeadsController.js';
 import { CampaignBookingModel } from '../Schema_Models/CampaignBooking.js';
 
 // Sales Tracker sheet feed. The sheet's Apps Script calls this once a day and adds the month's hot and warm leads it
 // does not have yet.
+//   GET /api/sales-sheet/call-leads?days=3      header X-Sheet-Secret: no-show + not-scheduled leads per BDA, for the Call Leads tab
 //   GET /api/sales-sheet/leads?month=YYYY-MM    header X-Sheet-Secret (32+ characters, enrolled on first use)
 // WhatsApp status for Col 12 (Greetings Message) and Col 13 (Follow-up Alert):
 //   GET /api/sales-sheet/whatsapp-status?phone=447508762523&bookingId=booking_xxx   header X-Sheet-Secret
@@ -17,6 +19,19 @@ const limiter = createUserRateLimiter({ max: 60, windowMs: 60 * 1000, keyOf: () 
 const statusLimiter = createUserRateLimiter({ max: 120, windowMs: 60 * 1000, keyOf: () => 'sales-sheet-wa-status' });
 
 export function registerSalesSheetRoutes(app, deps = {}) {
+  app.get('/api/sales-sheet/call-leads', limiter, async (req, res) => {
+    try {
+      if (!(await (deps.keyOk ?? keyOk)(req.get('x-sheet-secret')))) return fail(res, 401, 'bad_secret', 'Missing or wrong X-Sheet-Secret');
+      const days = Number(req.query.days ?? 3);
+      if (!Number.isInteger(days) || days < 1 || days > 14) return fail(res, 422, 'invalid_days', 'days must be a whole number from 1 to 14');
+      const data = await (deps.buildCallLeads ?? buildPendingCallLeads)({ days });
+      return res.status(200).json({ success: true, ok: true, ...data });
+    } catch (err) {
+      console.error('[salesSheet] call-leads failed:', err?.message);
+      return fail(res, 500, 'call_leads_failed', 'Could not build the call leads list');
+    }
+  });
+
   app.get('/api/sales-sheet/leads', limiter, async (req, res) => {
     try {
       if (!(await (deps.keyOk ?? keyOk)(req.get('x-sheet-secret')))) return fail(res, 401, 'bad_secret', 'Missing or wrong X-Sheet-Secret');
