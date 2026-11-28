@@ -250,6 +250,7 @@ import { registerSalesAllocationRoutes } from "./Routes/salesAllocationRoutes.js
 import { registerAbsenceRoutes } from "./Routes/absenceRoutes.js";
 import { registerWarningLetterRoutes } from "./Routes/warningLetterRoutes.js";
 import { registerSalesSheetRoutes } from "./Routes/salesSheetRoutes.js";
+import { registerUnsubscribeRoutes } from "./Routes/unsubscribeRoutes.js";
 import { registerCalendlyRecapRoutes } from "./Routes/calendlyRecapRoutes.js";
 import { registerAttendanceSetupRoutes } from "./Routes/attendanceSetupRoutes.js";
 
@@ -485,6 +486,8 @@ registerAbsenceRoutes(app);
   registerWarningLetterRoutes(app);
   // Sales Tracker sheet: the Apps Script pulls each month's hot and warm leads per executive.
   registerSalesSheetRoutes(app);
+  // Public unsubscribe page for the link in follow-up emails.
+  registerUnsubscribeRoutes(app);
   // Calendly Notetaker recaps sent by the Gmail Apps Script, and the CRM views of them.
   registerCalendlyRecapRoutes(app);
   // One-call setup (seed the registry, audit and re-link calls, status checklist). Dry run unless apply is sent.
