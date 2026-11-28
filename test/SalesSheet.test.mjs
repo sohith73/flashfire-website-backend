@@ -2,7 +2,7 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
-import { monthBounds, countryFor, sheetDate, sheetDateTime, buildSalesSheetLeads } from '../Utils/SalesSheetLeads.js';
+import { monthBounds, countryFor, sheetDate, sheetDateTime, buildSalesSheetLeads, sheetNote } from '../Utils/SalesSheetLeads.js';
 import { makeKeyCheck } from '../Utils/IntegrationKeyAuth.js';
 import { registerSalesSheetRoutes } from '../Routes/salesSheetRoutes.js';
 import { normalizePlan, updateFollowUpPlan } from '../Controllers/ScheduleFollowUpController.js';
@@ -72,6 +72,14 @@ describe('buildSalesSheetLeads', () => {
     const out = await buildSalesSheetLeads('2026-11', { ...deps, Bookings: { find: () => chain([picked]) } });
     assert.equal(out.executives.find((x) => x.key === 'siddhartha').leads[0].followUpDate, '02-Dec-2026');
   });
+  it('carries the BDA note on one line and caps it', async () => {
+    assert.equal(sheetNote('call back\nasked for EXECUTIVE'), 'call back | asked for EXECUTIVE');
+    assert.equal(sheetNote(null), '');
+    assert.equal(sheetNote('x'.repeat(2000)).length, 1000);
+    const n = { ...booking({ id: 'n', name: 'N', phone: '+447000000020', by: 'kalpataru@flashfirehq.com' }), meetingNotes: 'wants to think' };
+    const out = await buildSalesSheetLeads('2026-11', { ...deps, Bookings: { find: () => chain([n]) } });
+    assert.equal(out.executives.find((x) => x.key === 'kalpataru').leads[0].notes, 'wants to think');
+  });
   it('uses the package the BDA leaned towards when no plan was bought, and the bought plan when there is one', async () => {
     const a = { ...booking({ id: 'h', name: 'H', phone: '+447000000011', by: 'kalpataru@flashfirehq.com' }), followUp: { plan: 'EXECUTIVE' } };
     const b = { ...booking({ id: 'i', name: 'I', phone: '+447000000012', by: 'kalpataru@flashfirehq.com', plan: { name: 'IGNITE', price: 199 } }), followUp: { plan: 'EXECUTIVE' } };
@@ -129,5 +137,26 @@ describe('follow-up package', () => {
     await updateFollowUpPlan({ params: { bookingId: 'x' }, body: { plan: 'gold' } }, res);
     assert.equal(res.code, 400);
     assert.equal(res.body.success, false);
+  });
+  it('refuses a follow-up with no package unless the lead already has one', async () => {
+    const { CampaignBookingModel } = await import('../Schema_Models/CampaignBooking.js');
+    const { default: ScheduleFollowUp } = await import('../Controllers/ScheduleFollowUpController.js');
+    const original = CampaignBookingModel.findOne;
+    const run = async (booking, body) => {
+      CampaignBookingModel.findOne = async () => booking;
+      const res = { code: 0, body: null, status(c) { this.code = c; return this; }, json(b) { this.body = b; return this; } };
+      await ScheduleFollowUp({ params: { bookingId: 'x' }, body: { followUpDateTime: new Date(Date.now() - 1000).toISOString(), ...body } }, res);
+      return res;
+    };
+    try {
+      const none = await run({}, {});
+      assert.equal(none.code, 400);
+      assert.match(none.body.message, /package/i);
+      // already has a plan: passes the package gate and fails later on the past date instead
+      const has = await run({ followUp: { plan: 'PRIME' } }, {});
+      assert.match(has.body.message, /future/i);
+      const given = await run({}, { plan: 'ignite' });
+      assert.match(given.body.message, /future/i);
+    } finally { CampaignBookingModel.findOne = original; }
   });
 });

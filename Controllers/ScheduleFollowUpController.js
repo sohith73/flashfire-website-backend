@@ -43,6 +43,8 @@ export default async function ScheduleFollowUp(req, res) {
       return res.status(400).json({ success: false, message: `plan must be one of ${FOLLOW_UP_PLANS.join(', ')}` });
     }
 
+    // A package is mandatory: the sales sheet and the leads table both show it. A lead that already bought a plan
+    // or already has one saved does not need it again (checked below, once the booking is loaded).
     // Validation
     if (!bookingId || !followUpDateTime) {
       return res.status(400).json({
@@ -59,6 +61,13 @@ export default async function ScheduleFollowUp(req, res) {
       return res.status(404).json({
         success: false,
         message: 'Booking not found'
+      });
+    }
+
+    if (!plan && !booking.paymentPlan?.name && !booking.followUp?.plan) {
+      return res.status(400).json({
+        success: false,
+        message: `Choose the package the lead is interested in (${FOLLOW_UP_PLANS.join(', ')})`
       });
     }
 
