@@ -62,7 +62,7 @@ export function registerSalesSheetRoutes(app, deps = {}) {
       // Fetch booking from DB
       const query = bookingId ? { bookingId } : { clientPhone: { $regex: phone.replace(/\D/g, '') } };
       const booking = await CampaignBookingModel.findOne(query)
-        .select('bookingStatus statusChangedAt clientPhone followUp scheduledWorkflows paymentPlan calendlyHost originalBda')
+        .select('bookingStatus statusChangedAt scheduledEventStartTime clientPhone followUp scheduledWorkflows paymentPlan calendlyHost originalBda')
         .lean();
 
       if (!booking) return fail(res, 404, 'not_found', 'Booking not found');
@@ -81,9 +81,13 @@ export function registerSalesSheetRoutes(app, deps = {}) {
 
       // ── Greeting status (Col 12) ──────────────────────────────────────────
       let greetingStatus = '';
+      // The greeting is due one hour after the meeting started. Before that the cell stays empty, so a
+      // fresh meeting does not show "Pending" while the BDA is still wrapping up.
       if (status === 'completed' && statusChangedAt) {
-        const { sent, error } = await (deps.didCompanySendAfter ?? didCompanySendAfter)(phone_, statusChangedAt, executiveKey);
-        if (!error) greetingStatus = sent ? 'Done' : 'Pending';
+        const meetingAt = booking.scheduledEventStartTime || statusChangedAt;
+        const { sent, error } = await (deps.didCompanySendAfter ?? didCompanySendAfter)(phone_, meetingAt, executiveKey);
+        const dueAt = new Date(new Date(meetingAt).getTime() + 60 * 60 * 1000);
+        if (!error) greetingStatus = sent ? 'Done' : (now >= dueAt ? 'Pending' : '');
       }
 
       // ── Follow-up status (Col 13) ─────────────────────────────────────────

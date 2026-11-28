@@ -967,11 +967,12 @@ async function checkGreetingAlerts() {
   try {
     bookings = await CampaignBookingModel.find({
       bookingStatus: 'completed',
-      statusChangedAt: { $gte: oneDayAgo, $lte: oneHourAgo },
+      // The greeting is due one hour after the meeting started, whenever the BDA marked it completed.
+      scheduledEventStartTime: { $gte: oneDayAgo, $lte: oneHourAgo },
       bdaGreetingAlertSentAt: null,
       clientPhone: { $nin: [null, ''] },
       'calendlyHost.email': { $in: ['kalpataru@flashfirehq.com', 'siddhartha@flashfirehq.com'] },
-    }).select('clientName clientPhone claimedBy statusChangedAt calendlyHost originalBda').lean();
+    }).select('clientName clientPhone claimedBy statusChangedAt scheduledEventStartTime calendlyHost originalBda').lean();
   } catch (err) {
     console.error('[GreetingAlert] DB query failed:', err.message);
     return;
@@ -981,7 +982,8 @@ async function checkGreetingAlerts() {
     try {
       const bdaEmail = (booking.calendlyHost?.email || booking.originalBda?.email || '').toLowerCase();
       const executiveKey = bdaEmail.includes('kalpataru') ? 'kalpataru' : 'siddhartha';
-      const { sent, error } = await didCompanySendAfter(booking.clientPhone, booking.statusChangedAt, executiveKey);
+      const meetingAt = booking.scheduledEventStartTime || booking.statusChangedAt;
+      const { sent, error } = await didCompanySendAfter(booking.clientPhone, meetingAt, executiveKey);
 
       if (error) {
         console.warn(`[GreetingAlert] Bridge error for booking ${booking._id}: ${error}`);
@@ -1005,7 +1007,8 @@ async function checkGreetingAlerts() {
       );
       if (!claimed) continue;
 
-      const elapsed = formatElapsed(minutesSince(booking.statusChangedAt));
+      const meetingAt = booking.scheduledEventStartTime || booking.statusChangedAt;
+      const elapsed = formatElapsed(minutesSince(meetingAt));
       const bdaName = booking.calendlyHost?.name || booking.originalBda?.name || booking.claimedBy?.name || 'Unknown BDA';
       const formattedPhone = `+${String(booking.clientPhone).replace(/\D/g, '')}`;
 
@@ -1015,8 +1018,8 @@ async function checkGreetingAlerts() {
         `**BDA:** ${bdaName}`,
         `**Client:** ${booking.clientName || 'Unknown'}`,
         `**Phone:** ${formattedPhone}`,
-        `**Meeting completed at:** ${formatIST(booking.statusChangedAt)}`,
-        `**Time elapsed:** ${elapsed}`,
+        `**Meeting started at:** ${formatIST(meetingAt)}`,
+        `**Time since meeting:** ${elapsed}`,
       ].join('\n');
 
       await DiscordConnect(LEAD_ACTION_WEBHOOK, msg, false).catch(() => {});
@@ -1162,8 +1165,9 @@ export function startCronScheduler() {
     }
   }, { scheduled: true, timezone: IST_TIMEZONE });
 
-  // Every 15 min: follow-up alert — BDA must send WhatsApp by the scheduled follow-up date
-  cron.schedule('*/15 * * * *', async () => {
+  // 12:00 AM IST daily: follow-up alert — BDA must send WhatsApp by the scheduled follow-up date.
+  // checkFollowUpAlerts looks back 24h, so one run a day covers every follow-up that fell due since the last one.
+  cron.schedule('0 0 * * *', async () => {
     try {
       await checkFollowUpAlerts();
     } catch (err) {

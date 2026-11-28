@@ -169,3 +169,36 @@ describe('follow-up package', () => {
     } finally { CampaignBookingModel.findOne = original; }
   });
 });
+
+describe('greeting status waits one hour after the meeting', () => {
+  let server; let base; let origFindOne; let booking; let sentAnswer;
+  before(async () => {
+    const { CampaignBookingModel } = await import('../Schema_Models/CampaignBooking.js');
+    origFindOne = CampaignBookingModel.findOne;
+    CampaignBookingModel.findOne = () => ({ select: () => ({ lean: async () => booking }) });
+    const app = express();
+    registerSalesSheetRoutes(app, { keyOk: async () => true, didCompanySendAfter: async () => ({ sent: sentAnswer, error: null }) });
+    await new Promise((r) => { server = app.listen(0, r); });
+    base = `http://127.0.0.1:${server.address().port}`;
+  });
+  after(async () => {
+    const { CampaignBookingModel } = await import('../Schema_Models/CampaignBooking.js');
+    CampaignBookingModel.findOne = origFindOne;
+    server.close();
+  });
+  const status = async () => (await (await fetch(`${base}/api/sales-sheet/whatsapp-status?bookingId=b1`, { headers: { 'X-Sheet-Secret': 'x'.repeat(32) } })).json()).greetingStatus;
+  const mk = (minsAgo) => ({ bookingStatus: 'completed', clientPhone: '+14155550000', statusChangedAt: new Date(Date.now() - 5 * 60000), scheduledEventStartTime: new Date(Date.now() - minsAgo * 60000), calendlyHost: { email: 'kalpataru@flashfirehq.com' } });
+
+  it('is empty before the hour is up and Pending after it', async () => {
+    sentAnswer = false;
+    booking = mk(30);
+    assert.equal(await status(), '');
+    booking = mk(61);
+    assert.equal(await status(), 'Pending');
+  });
+  it('shows Done as soon as the greeting went out, even inside the hour', async () => {
+    sentAnswer = true;
+    booking = mk(30);
+    assert.equal(await status(), 'Done');
+  });
+});
