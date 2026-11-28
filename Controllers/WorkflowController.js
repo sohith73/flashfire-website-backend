@@ -9,6 +9,8 @@ import { getRescheduleLinkForBooking } from '../Utils/CalendlyAPIHelper.js';
 import { buildTemplateParameters } from '../Utils/TemplateParameterBuilder.js';
 import { safeErrorDetails } from '../Utils/safeErrorDetails.js';
 import { DesignedEmailTemplateModel } from '../Schema_Models/DesignedEmailTemplate.js';
+import { applyEmailFooter } from '../Utils/EmailFooter.js';
+import { isUnsubscribed } from '../Utils/Unsubscribe.js';
 import { renderDesignedEmail, buildBookingTokens, unsubscribeAsm } from './DesignedEmailTemplateController.js';
 
 function normalizePhoneForMatching(phone) {
@@ -1013,6 +1015,7 @@ async function executeWorkflowStep(step, booking, workflowId, workflowName = nul
       if (!booking.clientEmail) {
         throw new Error('Client email not available');
       }
+      if (await isUnsubscribed(booking.clientEmail)) throw new Error('Recipient unsubscribed');
       const domainName = step.domainName || 'flashfiremails.com';
 
       let senderEmail;
@@ -1051,6 +1054,7 @@ async function executeWorkflowStep(step, booking, workflowId, workflowName = nul
         };
       }
 
+      applyEmailFooter(msg, booking, { designed: isDesigned, triggerAction });
       const result = await sgMail.send(msg);
       responseData = { statusCode: result[0]?.statusCode, messageId: result[0]?.headers?.['x-message-id'] };
       console.log(`✅ Email sent via workflow ${workflowId} to ${booking.clientEmail} (${isDesigned ? 'designed' : 'sendgrid'} template)`);

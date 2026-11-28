@@ -1,4 +1,6 @@
 import { WorkflowLogModel } from '../Schema_Models/WorkflowLog.js';
+import { applyEmailFooter } from '../Utils/EmailFooter.js';
+import { isUnsubscribed } from '../Utils/Unsubscribe.js';
 import { CampaignBookingModel } from '../Schema_Models/CampaignBooking.js';
 import sgMail from '@sendgrid/mail';
 
@@ -218,6 +220,10 @@ export const sendWorkflowLogNow = async (req, res) => {
       });
     }
 
+    if (await isUnsubscribed(log.clientEmail)) {
+      return res.status(409).json({ success: false, message: 'This recipient has unsubscribed' });
+    }
+
     // Send email via SendGrid
     const msg = {
       to: log.clientEmail,
@@ -230,6 +236,7 @@ export const sendWorkflowLogNow = async (req, res) => {
       }
     };
 
+    applyEmailFooter(msg, { ...booking, clientEmail: log.clientEmail }, { designed: false, triggerAction: log.triggerAction });
     let responseData = null;
     try {
       const result = await sgMail.send(msg);

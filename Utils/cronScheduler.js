@@ -13,6 +13,8 @@ import { safeErrorDetails } from './safeErrorDetails.js';
 import { sendgridCircuitBreaker } from './CircuitBreaker.js';
 import { clientHasPaidBooking, clientHasBookedElsewhere } from '../Controllers/WorkflowController.js';
 import { DesignedEmailTemplateModel } from '../Schema_Models/DesignedEmailTemplate.js';
+import { applyEmailFooter } from './EmailFooter.js';
+import { isUnsubscribed } from './Unsubscribe.js';
 import { renderDesignedEmail, buildBookingTokens, unsubscribeAsm } from '../Controllers/DesignedEmailTemplateController.js';
 import { ScheduledWhatsAppReminderModel } from '../Schema_Models/ScheduledWhatsAppReminder.js';
 import { ScheduledCallModel } from '../Schema_Models/ScheduledCall.js';
@@ -214,6 +216,14 @@ export async function executeWorkflowLog(log) {
         return;
       }
 
+      if (await isUnsubscribed(booking.clientEmail)) {
+        await WorkflowLogModel.updateOne(
+          { logId: log.logId },
+          { $set: { status: 'cancelled', error: 'Recipient unsubscribed', executedAt: new Date() } }
+        );
+        return;
+      }
+
       // A templateId without the SendGrid "d-" prefix is the Mongo _id of an
       // in-dashboard DesignedEmailTemplate -> render its HTML and send directly.
       const isDesigned = !!log.step.templateId && !/^d-/i.test(String(log.step.templateId).trim());
@@ -244,6 +254,7 @@ export async function executeWorkflowLog(log) {
         };
       }
 
+      applyEmailFooter(msg, booking, { designed: isDesigned, triggerAction: log.triggerAction });
       const result = await sendgridCircuitBreaker.execute(() => sgMail.send(msg));
       const responseData = { statusCode: result[0]?.statusCode, messageId: result[0]?.headers?.['x-message-id'] };
 
